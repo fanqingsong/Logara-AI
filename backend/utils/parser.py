@@ -1,44 +1,69 @@
-import re
-from datetime import datetime
-from typing import Dict, Optional
+"""
+parser.py - Orchestration layer for parsing raw logs into structured JSON payloads.
+"""
+import logging
+from typing import Dict, Optional, Any
+
+from utils.patterns import PARSERS
+from utils.metadata import extract_metadata
+from utils.timestamp import normalize_timestamp
+
+logger = logging.getLogger(__name__)
 
 class LogParser:
     """
-    Utility to parse common log formats into structured JSON.
-    Initial support for standard [TIMESTAMP] LEVEL: MESSAGE patterns.
+    Orchestrates the parsing of raw log lines into a standardized dictionary format.
+    Delegates pattern matching, timestamp formatting, and metadata extraction to specialized modules.
     """
-    
-    LOG_PATTERN = re.compile(
-        r'\[(?P<timestamp>.*?)\]\s+(?P<level>INFO|WARN|ERROR|DEBUG|CRITICAL):\s+(?P<message>.*)'
-    )
 
     @staticmethod
-    def parse_line(line: str) -> Optional[Dict]:
-        match = LogParser.LOG_PATTERN.match(line)
-        if not match:
-            return None
+    def parse_line(line: str) -> Optional[Dict[str, Any]]:
+        """
+        Parses a single log line against dynamically loaded patterns.
         
-        data = match.groupdict()
-        # Attempt to normalize timestamp
-        try:
-            # Placeholder for actual parsing logic
-            pass
-        except Exception:
-            pass
+        Args:
+            line (str): The raw log line string.
             
-        return data
+        Returns:
+            Optional[Dict]: A standardized dictionary representing the parsed log,
+                            or None if the line could not be parsed or was empty.
+        """
+        if not line or not line.strip():
+            return None
 
-    @staticmethod
-    def extract_metadata(message: str) -> Dict:
-        """
-        Simple heuristic to extract potential metadata from log messages.
-        Example: Extracts 'auth-service' from 'Latency spike in auth-service'
-        """
-        metadata = {}
-        # Simple keyword matching for demo purposes
-        if "service" in message.lower():
-            words = message.split()
-            for i, word in enumerate(words):
-                if "service" in word.lower():
-                    metadata["service"] = word.strip(".,")
-        return metadata
+        clean_line = line.strip()
+
+        for parser_name, pattern in PARSERS:
+            match = pattern.match(clean_line)
+            
+            if match:
+                data = match.groupdict()
+                raw_ts = data.get("timestamp", "")
+                level = data.get("level", "INFO").upper()
+                message = data.get("message", "")
+
+                timestamp = raw_ts
+                try:
+                    normalized = normalize_timestamp(raw_ts)
+                    if normalized:
+                        timestamp = normalized
+                except Exception as e:
+                    logger.warning(f"Timestamp normalization failed for '{raw_ts}': {e}", exc_info=True)
+
+                metadata = {}
+                try:
+                    metadata = extract_metadata(message)
+                except Exception as e:
+                    logger.warning(f"Metadata extraction failed: {e}", exc_info=True)
+
+                return {
+                    "timestamp": timestamp,
+                    "level": level,
+                    "message": message,
+                    "metadata": metadata,
+                    "parser_type": parser_name,
+                    "raw": clean_line
+                }
+
+        logger.debug(f"Unparseable log line (no patterns matched): {clean_line[:100]}...")
+        return None

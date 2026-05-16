@@ -3,7 +3,6 @@ uvicorn
 python-dotenv
 pydantic
 sqlalchemy
-sqlite
 qdrant-client
 langchain-ollama
 langchain-huggingface
