@@ -25,8 +25,8 @@ async def root():
 @app.post("/ingest")
 async def ingest_logs(log_data: str = Body(..., embed=True)):
     """
-    Accepts raw log strings and parses them into structured data.
-    In production, this would queue for vectorization.
+    Accepts raw log strings, parses them into structured data,
+    and pushes the payload to the Redis queue for asynchronous processing.
     """
     if not log_data or not log_data.strip():
         raise HTTPException(status_code=400, detail="Log message cannot be empty")
