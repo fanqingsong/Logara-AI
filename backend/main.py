@@ -2,6 +2,9 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 
 from utils.parser import LogParser
+from utils.queue import redis_client
+
+import json
 
 app = FastAPI(
     title="Logara AI API",
@@ -29,7 +32,8 @@ async def root():
 @app.post("/ingest")
 async def ingest_logs(log_data: str = Body(..., embed=True)):
     """
-    Accepts raw log strings and parses them into structured data.
+    Accepts raw log strings, parses them into structured data,
+    and pushes the payload to the Redis queue for asynchronous processing.
     """
     if not log_data or not log_data.strip():
         raise HTTPException(
@@ -45,9 +49,25 @@ async def ingest_logs(log_data: str = Body(..., embed=True)):
             "message": log_data
         }
 
+    metadata = parsed.get("metadata", {})
+
+    payload = {
+        "parsed": parsed,
+        "metadata": metadata
+    }
+
+    try:
+        redis_client.lpush("log_queue", json.dumps(payload))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to queue log: {str(e)}"
+        )
+
     return {
-        "status": "success",
-        "parsed": parsed
+        "status": "success_queued",
+        "parsed": parsed,
+        "metadata": metadata
     }
 
 
