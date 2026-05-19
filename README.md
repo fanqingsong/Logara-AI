@@ -81,7 +81,12 @@ cp .env.example .env
    python -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
+   
+   # In terminal 1: Start the ingestor API
    fastapi dev main.py
+   
+   # In terminal 2: Start the background log processor
+   python worker.py
    ```
 
 4. **Frontend**:

@@ -1,8 +1,16 @@
+"""
+Redis Queue Utility Module
+
+This module initializes the Redis client used by both the FastAPI ingestor
+(to publish logs) and the background worker (to consume logs). It safely
+loads credentials from the root environment file.
+"""
+
 import os
 import redis
 from dotenv import load_dotenv
 
-# Load the .env from the root of the project
+# Load the .env from the root of the project to stay synced with docker-compose
 env_path = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
 load_dotenv(dotenv_path=env_path)
 
