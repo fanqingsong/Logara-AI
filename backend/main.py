@@ -1,10 +1,17 @@
-from fastapi import FastAPI, HTTPException, Body
+import os
+import json
+
+import httpx
+from fastapi import FastAPI, HTTPException, Body, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from qdrant_client import QdrantClient
 from utils.parser import LogParser
 from utils.queue import redis_client
 
-import json
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+__
 
 app = FastAPI(
     title="Logara AI API",
@@ -70,7 +77,38 @@ async def ingest_logs(log_data: str = Body(..., embed=True)):
         "metadata": metadata
     }
 
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+@app.get("/health", status_code=200)
+async def health_check(response: Response):
+    services = {}
+    # Redis check (sync client, already imported as redis_client)
+    try:
+        redis_client.ping()
+        services["redis"] = {"status": "healthy"}
+    except Exception as e:
+        services["redis"] = {"status": "unhealthy", "error": str(e)}
+    # Qdrant check (initialize inline, lightweight collections call)
+    try:
+        qclient = QdrantClient(url=QDRANT_URL, timeout=3)
+        qclient.get_collections()
+        services["qdrant"] = {"status": "healthy"}
+    except Exception as e:
+        services["qdrant"] = {"status": "unhealthy", "error": str(e)}
+    # Ollama check (HTTP GET to /api/tags with tight timeout)
+    try:
+        r = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3.0)
+        if r.status_code == 200:
+            services["ollama"] = {"status": "healthy"}
+        else:
+            services["ollama"] = {"status": "unhealthy", "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        services["ollama"] = {"status": "unhealthy", "error": str(e)}
+    # Determine overall status
+    overall = "unhealthy" if any(
+        s["status"] == "unhealthy" for s in services.values()
+    ) else "healthy"
+    if overall == "unhealthy":
+        response.status_code = 503
+    return {
+        "status": overall,
+        "services": services
+    }
