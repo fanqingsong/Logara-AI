@@ -1,8 +1,13 @@
+import os
+import json
+import threading
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Union, Optional
 from utils.parser import LogParser
+from utils.otel import parse_otel_log_payload
+from utils.queue import redis_client
 
 app = FastAPI(
     title="Logara AI API",
