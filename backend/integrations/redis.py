@@ -8,6 +8,7 @@ import redis
 
 from core.settings import get_settings
 
+logger = logging.getLogger(__name__)
 
 class RedisQueueClient:
     """
