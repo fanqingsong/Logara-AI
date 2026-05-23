@@ -106,11 +106,13 @@ class IngestionService:
             for key, value in redaction_summary.items():
                 total_redaction_summary[key] = total_redaction_summary.get(key, 0) + value
 
-        return {
-            "status": "success",
-            "processed_records": processed_records,
-            "redaction_summary": total_redaction_summary,
-        }
+    return {
+    "status": "success",
+    "message": "Logs processed successfully",
+    "processed_records": processed_records,
+    "redaction_summary": total_redaction_summary,
+    "fallback_used": False,
+}
 
     def ingest_otel_logs(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not payload:
@@ -125,11 +127,13 @@ class IngestionService:
             ) from exc
 
         if not records:
-            return {
-                "status": "success",
-                "processed_records": 0,
-                "redaction_summary": {},
-            }
+        return {
+    "status": "success",
+    "message": "No logs found in payload",
+    "processed_records": 0,
+    "redaction_summary": {},
+    "fallback_used": True,
+}
 
         queued_count = 0
         total_redaction_matches: dict[str, int] = {}
@@ -147,11 +151,12 @@ class IngestionService:
             queued_count += 1
 
         return {
-            "status": "success",
-            "processed_records": queued_count,
-            "redaction_summary": total_redaction_matches,
-        }
-
+    "status": "success",
+    "message": "OTel logs processed successfully",
+    "processed_records": queued_count,
+    "redaction_summary": total_redaction_matches,
+    "fallback_used": False,
+}
     def _normalize_structured_log(
         self,
         request_model: StructuredLogIngestRequest,
