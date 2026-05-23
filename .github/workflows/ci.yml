@@ -1,0 +1,11 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    uses: ./.github/workflows/repo-validation.yml

@@ -1,0 +1,17 @@
+name: Pre-Deploy Validation
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: pre-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    uses: ./.github/workflows/repo-validation.yml
+    with:
+      run_deploy_readiness: true
