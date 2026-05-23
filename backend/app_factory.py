@@ -1,6 +1,4 @@
-"""
-FastAPI application factory and lifecycle hooks.
-"""
+"""FastAPI application factory and lifecycle hooks."""
 
 from contextlib import asynccontextmanager
 
@@ -11,6 +9,7 @@ from core.settings import get_settings
 from integrations.qdrant import qdrant_client
 from routes.health import router as health_router
 from routes.ingestion import router as ingestion_router
+from routes.search import router as search_router
 from services.ingestion import IngestionService
 from utils.redaction import build_default_redactor
 
@@ -18,6 +17,7 @@ from utils.redaction import build_default_redactor
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+
     app.state.ingestion_service = IngestionService(
         redactor=build_default_redactor(
             enabled=settings.redact_enabled,
@@ -25,7 +25,9 @@ async def lifespan(app: FastAPI):
             include_ipv4=settings.redact_ipv4,
         )
     )
+
     yield
+
     qdrant_client.close()
 
 
@@ -61,6 +63,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(ingestion_router)
+    app.include_router(search_router)
     app.include_router(health_router)
 
     return app

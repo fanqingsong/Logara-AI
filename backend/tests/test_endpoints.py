@@ -206,3 +206,36 @@ def test_ingest_structured_validation_error():
 def test_ingest_batch_empty_validation_error():
     response = client.post("/ingest", json={"logs": []})
     assert response.status_code == 422
+
+
+def test_ingest_structured_requires_service_id():
+    response = client.post(
+        "/ingest",
+        json={
+            "timestamp": "2026-05-16 10:30:00",
+            "level": "INFO",
+            "message": "structured log without service id",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@patch("utils.queue.redis_client.lpush")
+def test_ingest_structured_accepts_service_id_field(mock_lpush):
+    response = client.post(
+        "/ingest",
+        json={
+            "timestamp": "2026-05-16 10:30:00",
+            "level": "ERROR",
+            "service_id": "payments-api",
+            "message": "database timeout during checkout",
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["parsed"]["service_id"] == "payments-api"
+    assert data["metadata"]["service_id"] == "payments-api"
+    assert mock_lpush.called
