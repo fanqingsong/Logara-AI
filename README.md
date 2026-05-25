@@ -70,7 +70,6 @@ This helps improve operational visibility while reducing the risk of sensitive d
 
 - [x] **Q2**: Implementation of OpenTelemetry (OTel) collector integration.
 - [x] **Q2**: Support for persistent vector storage partitioning by 'service_id'.
-- [x] **Q3**: AI Engine microservice foundation for Semantic Search and RAG pipelines.
 - [ ] **Q3**: Beta release of the "Explain Error" hover-state in the dashboard.
 - [ ] **Q4**: Multi-tenant RBAC for enterprise-grade deployments.
 

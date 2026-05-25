@@ -130,7 +130,7 @@ class IngestionService:
             "redaction_summary": redaction_summary,
         }
 
-        def ingest_batch_logs(
+    def ingest_batch_logs(
         self,
         logs: list[StructuredLogIngestRequest],
     ) -> dict[str, Any]:
