@@ -2,9 +2,9 @@
 redaction.py - Scrub common secrets and PII from log strings before
 they reach the parser, queue, or downstream services.
 """
-
-import re
 from copy import deepcopy
+import re
+import copy
 from dataclasses import dataclass, field
 from typing import Pattern
 
@@ -174,7 +174,7 @@ class Redactor:
             text=text,
             matches=matches
         )
-
+    
     def redact_dict(self, data: dict) -> dict:
         """
         Recursively redact nested dictionary/list string values.
@@ -184,26 +184,22 @@ class Redactor:
         if not self.enabled:
             return data
 
-        def _sanitize(value):
+        def walk(value):
             if isinstance(value, dict):
                 return {
-                    key: _sanitize(val)
+                    key: walk(val)
                     for key, val in value.items()
                 }
 
             if isinstance(value, list):
-                return [
-                    _sanitize(item)
-                    for item in value
-                ]
+                return [walk(item) for item in value]
 
             if isinstance(value, str):
                 return self.redact(value)
 
             return value
 
-        return _sanitize(deepcopy(data))
-
+        return walk(deepcopy(data))
 
 def build_default_redactor(
     enabled: bool = True,

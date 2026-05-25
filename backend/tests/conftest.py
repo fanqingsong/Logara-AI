@@ -1,4 +1,5 @@
 """
+feat/enhanced-log-parser
 Logara AI - Pytest Configuration and Centralized Fixtures.
 
 This module acts as the core testing infrastructure for the Logara AI backend.
@@ -173,3 +174,16 @@ def anyio_backend() -> str:
     routers and async background tasks. Defaults to using asyncio.
     """
     return "asyncio"
+  
+"""
+Pytest configuration for backend tests.
+Ensures backend modules are importable during test execution.
+"""
+
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))

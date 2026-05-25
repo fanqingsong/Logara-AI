@@ -176,55 +176,6 @@ class IngestionService:
             "metadata": normalized_log.metadata,
             "redaction_summary": redaction_summary,
         }
-
-        def ingest_batch_logs(
-    self,
-    logs: list[StructuredLogIngestRequest],
-) -> dict[str, Any]:
-
-            processed_records = 0
-            failed_records = 0
-
-            failures: list[dict[str, Any]] = []
-
-            total_redaction_summary: dict[str, int] = {}
-
-            for index, log in enumerate(logs):
-                try:
-                    normalized_log, redaction_summary = (
-                        self._normalize_structured_log(log)
-                    )
-
-                    self._queue_normalized_payload(
-                        normalized_log.model_dump()
-                    )
-
-                    processed_records += 1
-
-                    for key, value in redaction_summary.items():
-                        total_redaction_summary[key] = (
-                            total_redaction_summary.get(key, 0) + value
-                        )
-
-                except Exception as exc:
-                    failed_records += 1
-
-                    failures.append({
-                        "record_index": index,
-                        "error": str(exc),
-                    })
-
-            return {
-                "status": (
-                    "partial_success"
-                    if failed_records > 0
-                    else "success"
-                ),
-                "processed_records": processed_records,
-                "failed_records": failed_records,
-                "failures": failures,
-                "redaction_summary": total_redaction_summary,
-            }
       
     def ingest_otel_logs(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not payload:
