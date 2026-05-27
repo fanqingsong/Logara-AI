@@ -13,13 +13,35 @@ import uuid
 from typing import Dict, Any, Optional
 
 from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
-try:
-    from qdrant_client.models import PointStruct, VectorParams, Distance
-except ImportError:
-    from qdrant_client.http.models import PointStruct, VectorParams, Distance
 
+try:
+    from qdrant_client import QdrantClient
+    try:
+        from qdrant_client.models import PointStruct, VectorParams, Distance
+    except ImportError:
+        from qdrant_client.http.models import PointStruct, VectorParams, Distance
+except ImportError:
+    class QdrantClient:
+        """Fallback Qdrant client for environments without qdrant-client installed."""
+
+    @dataclass
+    class PointStruct:
+        id: Any
+        vector: Any
+        payload: dict[str, Any]
+
+    class VectorParams:
+        def __init__(self, size: int, distance: Any):
+            self.size = size
+            self.distance = distance
+
+    class Distance:
+        COSINE = "Cosine"
+
+from core.settings import get_settings
+from services.duplicate_detector import DuplicateClusteringService
 from utils.queue import redis_client
+from utils.similarity import build_semantic_log_text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,12 +51,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "logs")
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
 
 # Lazy-loaded globals to keep unit tests fast/offline
 _embedding_model = None
 _qdrant_client = None
+_duplicate_clustering_service = None
 
 # Guards against repeated collection-init RPCs on every log in the hot path
 _collection_initialized: bool = False
@@ -50,7 +72,11 @@ def get_embedding_model() -> SentenceTransformer:
 def get_qdrant_client() -> QdrantClient:
     global _qdrant_client
     if _qdrant_client is None:
-        _qdrant_client = QdrantClient(url=QDRANT_URL, timeout=3)
+        settings = get_settings()
+        _qdrant_client = QdrantClient(
+            url=settings.qdrant_url,
+            timeout=settings.qdrant_timeout_seconds,
+        )
     return _qdrant_client
 
 
@@ -194,30 +220,51 @@ def process_log(payload_str: str) -> bool:
             increment_metric("malformed_payloads")
             return False
 
-        level = parsed.get("level", "UNKNOWN")
-        message = parsed.get("message", "No message")
-        parser_type = parsed.get("parser_type", "unknown")
-        timestamp = parsed.get("timestamp")
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        parsed_metadata = parsed.get("metadata") if isinstance(parsed.get("metadata"), dict) else {}
+        if parsed_metadata:
+            metadata = {**metadata, **parsed_metadata}
 
-        metadata = data.get("metadata", {})
+        level = str(parsed.get("level") or metadata.get("level") or "UNKNOWN")
+        parser_type = str(parsed.get("parser_type") or "unknown")
+        timestamp = parsed.get("timestamp") or metadata.get("timestamp")
+        message = parsed.get("message") or parsed.get("msg") or parsed.get("content")
+        if not message:
+            message = json.dumps(parsed, sort_keys=True, default=str)
+        message = str(message)
 
-        logger.info(
-            f"Processing log | level={level} | "
-            f"parser={parser_type} | "
-            f"message={message[:100]}"
+        service_name = (
+            parsed.get("service")
+            or metadata.get("service")
+            or metadata.get("service.name")
+            or metadata.get("service_id")
+            or "unknown_service"
         )
 
-        # 1. Generate Embeddings
+        semantic_text = build_semantic_log_text(
+            message=message,
+            level=level,
+            service_name=str(service_name),
+            metadata=metadata,
+        )
+
+        logger.info(
+            "Processing log | level=%s | parser=%s | message=%s",
+            level,
+            parser_type,
+            message[:100],
+        )
+
         try:
             model = get_embedding_model()
-            vector = model.encode(message).tolist()
+            vector = model.encode(semantic_text).tolist()
         except Exception as e:
-            logger.error(f"Failed to generate embedding: {e}")
+            logger.error("Failed to generate embedding: %s", e)
             increment_metric("failed_logs")
             return False
 
-        # 2. Store in Qdrant
         try:
+            settings = get_settings()
             q_client = get_qdrant_client()
             _ensure_collection_initialized(q_client)
 
@@ -230,31 +277,50 @@ def process_log(payload_str: str) -> bool:
             # → 'unknown_service' sentinel when no service is identified.
             service_id = _extract_service_id(metadata)
 
-            payload = {
-                "timestamp": timestamp,
-                "level": level,
-                "message": message,
-                "parser_type": parser_type,
-                "metadata": metadata,
-                "service_id": service_id
-            }
+            clustering_service = get_duplicate_clustering_service()
+            decision = clustering_service.assign_to_cluster(
+                log_text=message,
+                embedding=vector,
+                service_name=str(service_name),
+                timestamp=str(timestamp) if timestamp else None,
+                log_source=semantic_text,
+            )
 
-            q_client.upsert(
-                collection_name=QDRANT_COLLECTION,
-                points=[
-                    PointStruct(
-                        id=point_id,
-                        vector=vector,
-                        payload=payload
-                    )
-                ]
-            )
-            logger.info(
-                f"Successfully vectorized and indexed log to Qdrant | "
-                f"id={point_id} | service_id={service_id}"
-            )
+            if decision.is_duplicate:
+                logger.info(
+                    "Duplicate log clustered | cluster_id=%s | similarity_score=%.4f",
+                    decision.cluster_id,
+                    decision.similarity_score,
+                )
+            else:
+                point_id = str(uuid.uuid4())
+                payload = {
+                    "timestamp": timestamp,
+                    "level": level,
+                    "message": message,
+                    "parser_type": parser_type,
+                    "metadata": metadata,
+                    "service_id": str(service_name),
+                    "cluster_id": decision.cluster_id,
+                    "is_cluster": False,
+                }
+                q_client.upsert(
+                    collection_name=settings.qdrant_collection,
+                    points=[
+                        PointStruct(
+                            id=point_id,
+                            vector=vector,
+                            payload=payload,
+                        )
+                    ],
+                )
+                logger.info(
+                    "Successfully vectorized and indexed log to Qdrant | id=%s | service_id=%s",
+                    point_id,
+                    service_name,
+                )
         except Exception as e:
-            logger.error(f"Failed to store log in Qdrant: {e}")
+            logger.error("Failed to store log in Qdrant: %s", e)
             increment_metric("failed_logs")
             return False
 
@@ -262,12 +328,12 @@ def process_log(payload_str: str) -> bool:
         return True
 
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse payload as JSON: {e}")
+        logger.error("Failed to parse payload as JSON: %s", e)
         increment_metric("failed_logs")
         return False
 
     except Exception as e:
-        logger.error(f"Unexpected error processing payload: {e}")
+        logger.error("Unexpected error processing payload: %s", e)
         increment_metric("failed_logs")
         return False
 
