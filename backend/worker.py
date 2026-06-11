@@ -2,7 +2,7 @@
 Log Processor Worker
 
 Consumes log payloads from the Redis queue and processes them for
-future vectorization and LLM analysis workflows.
+vectorization and storage in Qdrant.
 """
 from anomaly.detector import analyze_log
 import json
