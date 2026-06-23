@@ -13,6 +13,7 @@ from routes.ingestion import router as ingestion_router
 from routes.search import router as search_router
 from routes.retrieval import router as retrieval_router
 from routes.ai import router as ai_router
+from routes.parsing import router as parsing_router
 from routes.performance import router as performance_router
 from routes.alerts import router as alerts_router
 from routes.security import router as security_router
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(retrieval_router)
     app.include_router(ai_router)
+    app.include_router(parsing_router)
     app.include_router(performance_router)
     app.include_router(alerts_router)
     app.include_router(security_router)
