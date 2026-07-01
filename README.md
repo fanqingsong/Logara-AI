@@ -19,7 +19,7 @@ Logara AI is a modular observability platform designed to transform raw, noisy l
 
 - **Semantic Log Search**: Transition from keyword-based Grep to natural language queries using Qdrant vector embeddings.
 - **Root Cause Synthesis**: Automated analysis of error clusters to identify underlying infrastructure or application issues.
-- **Local-First Processing**: Designed to run with Ollama for sensitive log data that shouldn't leave your infrastructure.
+- **LLM-Powered Analysis**: Uses GLM (via OpenAI-compatible API) for root-cause analysis and natural language insights.
 - **Anomaly Correlation**: Detects statistical outliers in log volume and type to preempt site reliability issues.
 - **Security-Aware Log Sanitization**: Automatically redacts sensitive data such as API keys, JWTs, emails, bearer tokens, and credit card patterns before logs enter downstream processing pipelines.
 
@@ -41,7 +41,7 @@ graph TD
 
     subgraph "AI Engine"
     E --> I[AI Engine Service]
-    J[Ollama Local LLM] <--> I
+    J[GLM LLM] <--> I
     end
 
     subgraph "Interface"
@@ -62,7 +62,7 @@ sequenceDiagram
     participant Queue as Redis<br/>Queue
     participant Processor as Log<br/>Processor
     participant VectorDB as Qdrant<br/>Vector DB
-    participant AI as AI Engine<br/>+ Ollama
+    participant AI as AI Engine<br/>+ GLM
 
     Client->>Ingestor: POST /ingest (raw log)
     activate Ingestor
@@ -98,7 +98,7 @@ sequenceDiagram
     
     Ingestor->>AI: Request synthesis<br/>(context + logs)
     activate AI
-    AI->>AI: Query Ollama<br/>for insights
+    AI->>AI: Query GLM<br/>for insights
     AI-->>Ingestor: Explanation + summary
     deactivate AI
     
@@ -114,7 +114,7 @@ sequenceDiagram
 4. **Processing**: Background worker consumes the job, generates embeddings, and stores vectors
 5. **Duplicate Clustering**: Similar logs are grouped by semantic similarity for noise reduction
 6. **Search**: When a user queries logs, semantic search retrieves relevant vectors from Qdrant
-7. **AI Synthesis**: Ollama LLM synthesizes findings into actionable insights
+7. **AI Synthesis**: GLM LLM synthesizes findings into actionable insights
 8. **Results**: Dashboard receives structured explanation and original log samples
 
 This architecture ensures that sensitive data never reaches downstream services while enabling fast semantic search and intelligent analysis.

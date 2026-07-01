@@ -1,6 +1,6 @@
 """
 ExplainService — RAG pipeline that retrieves relevant context logs from
-Qdrant and feeds them to Ollama to generate a root-cause explanation.
+Qdrant and feeds them to GLM to generate a root-cause explanation.
 """
 
 import logging
@@ -9,6 +9,7 @@ from typing import Optional
 import httpx
 
 from core.settings import get_settings
+from integrations.llm import llm_chat
 from schemas.explain import ExplainRequest, ExplainResponse
 from schemas.search import SearchResult
 from services.search import SearchService
@@ -51,16 +52,13 @@ def _build_prompt(error_message: str, context_logs: list[SearchResult]) -> str:
 
 class ExplainService:
     """
-    RAG-powered error explanation using Ollama for local LLM inference.
+    RAG-powered error explanation using GLM for LLM inference.
 
     Steps:
       1. Retrieve the top-K semantically similar logs via SearchService.
       2. Build a structured prompt embedding those context logs.
-      3. POST to Ollama's /api/generate endpoint (non-streaming).
+      3. Call GLM via the OpenAI-compatible chat completions API.
       4. Return the explanation alongside the context logs used.
-
-    Ollama is called directly with httpx.AsyncClient — no LangChain
-    dependency — keeping the service footprint small.
     """
 
 
@@ -86,9 +84,9 @@ class ExplainService:
             ExplainResponse with LLM explanation, context logs, and model name.
 
         Raises:
-            httpx.ConnectError:     Ollama is not reachable.
-            httpx.TimeoutException: Ollama took too long to respond.
-            httpx.HTTPStatusError:  Ollama returned a non-2xx status.
+            httpx.ConnectError:     LLM endpoint is not reachable.
+            httpx.TimeoutException: LLM took too long to respond.
+            httpx.HTTPStatusError:  LLM returned a non-2xx status.
         """
         settings = get_settings()
 
@@ -108,7 +106,7 @@ class ExplainService:
             return ExplainResponse(
                 explanation=cached_incident.explanation,
                 context_logs=[],
-                model=f"{settings.ollama_model} (cached)",
+                model=f"{settings.llm_model} (cached)",
             )
 
         # Step 1: Retrieve relevant context logs
@@ -121,27 +119,18 @@ class ExplainService:
         # Step 2: Build prompt
         prompt = _build_prompt(request.error_message, context_logs)
 
-        # Step 3: Call Ollama /api/generate
-        ollama_url = f"{settings.ollama_base_url.rstrip('/')}/api/generate"
+        # Step 3: Call GLM
+        try:
+            explanation = llm_chat(prompt, system=_SYSTEM_PROMPT)
+        except Exception as e:
+            logger.error(f"GLM request failed: {e}")
+            raise
 
-        async with httpx.AsyncClient(timeout=settings.ollama_timeout_seconds) as client:
-            response = await client.post(
-                ollama_url,
-                json={
-                    "model": settings.ollama_model,
-                    "system": _SYSTEM_PROMPT,
-                    "prompt": prompt,
-                    "stream": False,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        explanation = data.get("response", "").strip()
+        explanation = (explanation or "").strip()
         if not explanation:
             logger.warning(
-                "Ollama returned an empty 'response' field — "
-                "check that the model is pulled and the prompt is valid."
+                "GLM returned an empty response — "
+                "check that the model name and API key are correct."
             )
 
         else:
@@ -154,5 +143,5 @@ class ExplainService:
         return ExplainResponse(
             explanation=explanation,
             context_logs=context_logs,
-            model=settings.ollama_model,
+            model=settings.llm_model,
         )

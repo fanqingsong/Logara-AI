@@ -12,8 +12,6 @@ import time
 import uuid
 from typing import Dict, Any, Optional
 
-from sentence_transformers import SentenceTransformer
-
 try:
     from qdrant_client import QdrantClient
     try:
@@ -39,6 +37,7 @@ except ImportError:
         COSINE = "Cosine"
 
 from core.settings import get_settings
+from integrations.embedding import embed_texts
 from services.duplicate_detector import DuplicateClusteringService
 from utils.queue import redis_client
 from utils.similarity import build_semantic_log_text
@@ -50,12 +49,9 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "logs")
 
 # Lazy-loaded globals to keep unit tests fast/offline
-_embedding_model = None
 _qdrant_client = None
 _duplicate_clustering_service = None
 
@@ -63,11 +59,10 @@ _duplicate_clustering_service = None
 _collection_initialized: bool = False
 
 
-def get_embedding_model() -> SentenceTransformer:
-    global _embedding_model
-    if _embedding_model is None:
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-    return _embedding_model
+def embed(text: str) -> list[float]:
+    """Generate an embedding vector for a single text via SiliconFlow."""
+    vectors = embed_texts([text])
+    return vectors[0] if vectors else []
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -121,12 +116,15 @@ def _create_service_id_index(client: QdrantClient, collection_name: str) -> None
 def init_qdrant_collection(client: QdrantClient, collection_name: str) -> None:
     """
     Ensure the target Qdrant collection exists, is configured for
-    384-dimensional cosine-similarity vectors, and has a keyword payload
+    cosine-similarity vectors, and has a keyword payload
     index on 'service_id' for O(1) partition-based filtering.
 
     Safe to call on pre-existing collections — both collection creation
     and index creation are idempotent operations in Qdrant.
     """
+    settings = get_settings()
+    vector_size = settings.embedding_dimensions
+
     try:
         collection_exists = client.collection_exists(collection_name)
     except Exception:
@@ -142,7 +140,7 @@ def init_qdrant_collection(client: QdrantClient, collection_name: str) -> None:
         try:
             client.create_collection(
                 collection_name=collection_name,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
             )
             logger.info(f"Created Qdrant collection '{collection_name}'")
         except Exception as create_err:
@@ -272,8 +270,7 @@ def process_log(payload_str: str) -> bool:
         )
 
         try:
-            model = get_embedding_model()
-            vector = model.encode(semantic_text).tolist()
+            vector = embed(semantic_text)
         except Exception as e:
             logger.error("Failed to generate embedding: %s", e)
             increment_metric("failed_logs")

@@ -22,7 +22,7 @@ async def explain_error(request: ExplainRequest) -> ExplainResponse:
     Generate a root-cause analysis for the supplied error message.
 
     Retrieves semantically similar context logs from Qdrant and passes them
-    to Ollama together with the error to produce a structured explanation.
+    to GLM together with the error to produce a structured explanation.
     """
     try:
         return await _service.explain(request)
@@ -30,8 +30,8 @@ async def explain_error(request: ExplainRequest) -> ExplainResponse:
         raise HTTPException(
             status_code=503,
             detail=(
-                "LLM engine (Ollama) is unreachable. "
-                "Ensure Ollama is running and OLLAMA_BASE_URL is correct."
+                "LLM engine is unreachable. "
+                "Ensure the LLM endpoint is running and LLM_BASE_URL is correct."
             ),
         )
     except httpx.TimeoutException:

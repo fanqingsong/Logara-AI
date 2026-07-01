@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from core.settings import get_settings
 from routes.explain import router as explain_router
 from routes.search import router as search_router
-from services.search import get_embedding_model, get_qdrant_client
+from services.search import get_qdrant_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,13 +29,10 @@ async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
 
-    Warms up the sentence-transformer embedding model during startup so
-    that the first /search or /explain request does not incur model-load
-    latency (~2 s for all-MiniLM-L6-v2).
+    Probes Qdrant and the LLM endpoint at startup so that health is
+    established early, but no model warm-up is required (remote APIs).
     """
-    logger.info("AI Engine starting up — warming up embedding model...")
-    get_embedding_model()
-    logger.info("Embedding model ready.")
+    logger.info("AI Engine starting up...")
     yield
     logger.info("AI Engine shut down.")
 
@@ -61,11 +58,11 @@ async def health_check() -> dict:
     """
     Liveness and dependency health check.
 
-    Probes Qdrant (list collections) and Ollama (GET /api/tags).
+    Probes Qdrant (list collections) and the LLM endpoint.
     Returns overall status 'ok' only when both dependencies are reachable.
     """
     qdrant_ok = False
-    ollama_ok = False
+    llm_ok = False
 
     try:
         client = get_qdrant_client()
@@ -77,14 +74,14 @@ async def health_check() -> dict:
     try:
         async with httpx.AsyncClient(timeout=3.0) as http_client:
             resp = await http_client.get(
-                f"{settings.ollama_base_url.rstrip('/')}/api/tags"
+                settings.llm_base_url.rstrip("/")
             )
-            ollama_ok = resp.status_code == 200
+            llm_ok = resp.status_code < 500
     except Exception as e:
-        logger.warning(f"Ollama health probe failed: {e}")
+        logger.warning(f"LLM health probe failed: {e}")
 
     return {
-        "status": "ok" if (qdrant_ok and ollama_ok) else "degraded",
+        "status": "ok" if (qdrant_ok and llm_ok) else "degraded",
         "qdrant": qdrant_ok,
-        "ollama": ollama_ok,
+        "llm": llm_ok,
     }

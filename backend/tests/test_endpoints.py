@@ -12,16 +12,16 @@ def test_root_endpoint():
 
 @patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
-@patch("services.health.ollama_client.health_check")
-def test_health_endpoint_all_healthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
+@patch("services.health.llm_health_check")
+def test_health_endpoint_all_healthy(mock_llm_health, mock_qdrant_get_collections, mock_redis_ping):
     # Redis: ping succeeds (no exception)
     mock_redis_ping.return_value = True
 
     # Qdrant: get_collections() succeeds
     mock_qdrant_get_collections.return_value = MagicMock()
 
-    # Ollama: returns HTTP 200
-    mock_ollama_health.return_value = {"status_code": 200}
+    # LLM: returns HTTP 200
+    mock_llm_health.return_value = {"status_code": 200}
 
     response = client.get("/health")
     assert response.status_code == 200
@@ -29,21 +29,21 @@ def test_health_endpoint_all_healthy(mock_ollama_health, mock_qdrant_get_collect
     assert data["status"] == "healthy"
     assert data["services"]["redis"]["status"] == "healthy"
     assert data["services"]["qdrant"]["status"] == "healthy"
-    assert data["services"]["ollama"]["status"] == "healthy"
+    assert data["services"]["llm"]["status"] == "healthy"
 
 
 @patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
-@patch("services.health.ollama_client.health_check")
-def test_health_redis_unhealthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
+@patch("services.health.llm_health_check")
+def test_health_redis_unhealthy(mock_llm_health, mock_qdrant_get_collections, mock_redis_ping):
     # Redis: raises ConnectionError
     mock_redis_ping.side_effect = ConnectionError("Redis unreachable")
 
     # Qdrant: healthy
     mock_qdrant_get_collections.return_value = MagicMock()
 
-    # Ollama: healthy
-    mock_ollama_health.return_value = {"status_code": 200}
+    # LLM: healthy
+    mock_llm_health.return_value = {"status_code": 200}
 
     response = client.get("/health")
     assert response.status_code == 503
@@ -52,21 +52,21 @@ def test_health_redis_unhealthy(mock_ollama_health, mock_qdrant_get_collections,
     assert data["services"]["redis"]["status"] == "unhealthy"
     assert "error" in data["services"]["redis"]
     assert data["services"]["qdrant"]["status"] == "healthy"
-    assert data["services"]["ollama"]["status"] == "healthy"
+    assert data["services"]["llm"]["status"] == "healthy"
 
 
 @patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
-@patch("services.health.ollama_client.health_check")
-def test_health_qdrant_unhealthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
+@patch("services.health.llm_health_check")
+def test_health_qdrant_unhealthy(mock_llm_health, mock_qdrant_get_collections, mock_redis_ping):
     # Redis: healthy
     mock_redis_ping.return_value = True
 
     # Qdrant: get_collections() raises Exception
     mock_qdrant_get_collections.side_effect = Exception("Qdrant unreachable")
 
-    # Ollama: healthy
-    mock_ollama_health.return_value = {"status_code": 200}
+    # LLM: healthy
+    mock_llm_health.return_value = {"status_code": 200}
 
     response = client.get("/health")
     assert response.status_code == 503
@@ -75,21 +75,21 @@ def test_health_qdrant_unhealthy(mock_ollama_health, mock_qdrant_get_collections
     assert data["services"]["redis"]["status"] == "healthy"
     assert data["services"]["qdrant"]["status"] == "unhealthy"
     assert "error" in data["services"]["qdrant"]
-    assert data["services"]["ollama"]["status"] == "healthy"
+    assert data["services"]["llm"]["status"] == "healthy"
 
 
 @patch("services.health.redis_client.ping")
 @patch("services.health.qdrant_client.get_collections")
-@patch("services.health.ollama_client.health_check")
-def test_health_ollama_unhealthy(mock_ollama_health, mock_qdrant_get_collections, mock_redis_ping):
+@patch("services.health.llm_health_check")
+def test_health_llm_unhealthy(mock_llm_health, mock_qdrant_get_collections, mock_redis_ping):
     # Redis: healthy
     mock_redis_ping.return_value = True
 
     # Qdrant: healthy
     mock_qdrant_get_collections.return_value = MagicMock()
 
-    # Ollama: raises httpx.ConnectError
-    mock_ollama_health.side_effect = httpx.ConnectError("Ollama unreachable")
+    # LLM: raises httpx.ConnectError
+    mock_llm_health.side_effect = httpx.ConnectError("LLM unreachable")
 
     response = client.get("/health")
     assert response.status_code == 503
@@ -97,8 +97,8 @@ def test_health_ollama_unhealthy(mock_ollama_health, mock_qdrant_get_collections
     assert data["status"] == "unhealthy"
     assert data["services"]["redis"]["status"] == "healthy"
     assert data["services"]["qdrant"]["status"] == "healthy"
-    assert data["services"]["ollama"]["status"] == "unhealthy"
-    assert "error" in data["services"]["ollama"]
+    assert data["services"]["llm"]["status"] == "unhealthy"
+    assert "error" in data["services"]["llm"]
 
 def test_ingest_empty_log():
     response = client.post("/ingest", json={"log_data": ""})

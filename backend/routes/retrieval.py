@@ -105,7 +105,7 @@ async def get_logs(
 @router.post("/search", response_model=SearchResponse)
 async def semantic_search(request: SearchRequest):
     """
-    Perform semantic vector search using Qdrant and synthesize a response using local Ollama.
+    Perform semantic vector search using Qdrant and synthesize a response using GLM.
     """
     if not request.query or not request.query.strip():
         raise HTTPException(

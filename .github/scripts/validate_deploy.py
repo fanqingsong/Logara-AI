@@ -34,9 +34,9 @@ REQUIRED_PATHS = (
 )
 
 REQUIRED_ENV_KEYS = {
-    ".env.example": ("REDIS_PASSWORD",),
+    ".env.example": ("REDIS_PASSWORD", "LLM_API_KEY", "EMBEDDING_API_KEY"),
     "backend/.env.example": (
-        "OLLAMA_BASE_URL",
+        "LLM_BASE_URL",
         "QDRANT_URL",
         "DATABASE_URL",
     ),

@@ -24,13 +24,17 @@ class Settings(BaseSettings):
     incident_memory_collection: str = "incident_memory"
     incident_similarity_threshold: float = 0.95
 
-    # Ollama
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3"
-    ollama_timeout_seconds: float = 60.0
+    # LLM (GLM via OpenAI-compatible API)
+    llm_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    llm_api_key: str = ""
+    llm_model: str = "glm-5.1"
+    llm_timeout_seconds: float = 60.0
 
-    # Embedding
-    embedding_model_name: str = "all-MiniLM-L6-v2"
+    # Embedding (SiliconFlow via OpenAI-compatible API)
+    embedding_base_url: str = "https://api.siliconflow.cn/v1/"
+    embedding_api_key: str = ""
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dimensions: int = 1024
 
     # Service defaults
     ai_engine_search_limit: int = 10

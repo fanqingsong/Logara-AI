@@ -7,22 +7,17 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from integrations.embedding import embed_texts
 from integrations.qdrant import qdrant_client
 from services.vector_store import QdrantVectorStore
 from utils.service_id import normalize_service_id
-from worker import get_embedding_model
 
 router = APIRouter()
 
 
 def _vectorize_query(query: str) -> list[float]:
-    model = get_embedding_model()
-    vector = model.encode(query)
-
-    if hasattr(vector, "tolist"):
-        return vector.tolist()
-
-    return list(vector)
+    vectors = embed_texts([query])
+    return vectors[0] if vectors else []
 
 
 def _serialize_result(result: Any) -> dict[str, Any]:

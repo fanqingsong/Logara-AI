@@ -9,11 +9,9 @@ client = TestClient(app)
 
 
 @patch("routes.search.QdrantVectorStore")
-@patch("routes.search.get_embedding_model")
-def test_semantic_search_filters_by_service_id(mock_get_model, mock_store_cls):
-    mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
-    mock_get_model.return_value = mock_model
+@patch("routes.search.embed_texts")
+def test_semantic_search_filters_by_service_id(mock_embed_texts, mock_store_cls):
+    mock_embed_texts.return_value = [[0.1] * 1024]
 
     mock_store = MagicMock()
     mock_store.semantic_search.return_value = [

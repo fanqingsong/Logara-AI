@@ -44,20 +44,6 @@ def _mock_incident_memory_service(result=None) -> MagicMock:
     return svc
 
 
-def _make_async_ollama_mock(response_text: str = "Root cause: DB pool exhausted."):
-    """Return a patched httpx.AsyncClient context manager that returns a
-    successful Ollama /api/generate response."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"response": response_text}
-    mock_response.raise_for_status = MagicMock()  # no-op
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    return mock_client
-
-
 # ---------------------------------------------------------------------------
 # _build_prompt pure-function tests
 # ---------------------------------------------------------------------------
@@ -94,12 +80,11 @@ class TestBuildPrompt:
 class TestExplainService:
     @pytest.mark.asyncio
     async def test_happy_path_returns_explanation(self):
-        """Full pipeline: search → prompt → Ollama → ExplainResponse."""
+        """Full pipeline: search → prompt → GLM → ExplainResponse."""
         context = [_make_context_log()]
         mock_search = _mock_search_service(context)
-        mock_http_client = _make_async_ollama_mock("Root cause: DB pool exhausted.")
 
-        with patch("services.explain.httpx.AsyncClient", return_value=mock_http_client):
+        with patch("services.explain.llm_chat", return_value="Root cause: DB pool exhausted."):
             mock_incident_memory = MagicMock()
             mock_incident_memory.search_similar_incident.return_value = None
 
@@ -122,9 +107,8 @@ class TestExplainService:
     async def test_search_service_called_with_request_params(self):
         """service_id and context_limit must be forwarded to SearchService."""
         mock_search = _mock_search_service([])
-        mock_http_client = _make_async_ollama_mock()
 
-        with patch("services.explain.httpx.AsyncClient", return_value=mock_http_client):
+        with patch("services.explain.llm_chat", return_value="Explanation"):
             mock_incident_memory = MagicMock()
             mock_incident_memory.search_similar_incident.return_value = None
 
@@ -147,11 +131,11 @@ class TestExplainService:
         )
 
     @pytest.mark.asyncio
-    async def test_uses_cached_incident_without_calling_ollama(self):
+    async def test_uses_cached_incident_without_calling_llm(self):
         """
         If a highly similar incident already exists in memory,
         ExplainService should reuse the cached explanation
-        and skip Ollama generation.
+        and skip LLM generation.
         """
 
         cached_incident = MagicMock()
@@ -160,7 +144,7 @@ class TestExplainService:
 
         mock_memory = _mock_incident_memory_service(cached_incident)
 
-        with patch("services.explain.httpx.AsyncClient.post") as mock_post:
+        with patch("services.explain.llm_chat") as mock_llm:
 
             service = ExplainService(
                 search_service=_mock_search_service([]),
@@ -176,24 +160,19 @@ class TestExplainService:
         mock_memory.search_similar_incident.assert_called_once()
 
         # MOST IMPORTANT ASSERTION
-        mock_post.assert_not_called()
+        mock_llm.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cache_miss_calls_ollama_and_stores_incident(self):
+    async def test_cache_miss_calls_llm_and_stores_incident(self):
         """
         If no similar incident exists,
-        Ollama should generate a fresh explanation
+        GLM should generate a fresh explanation
         and the result should be stored in incident memory.
         """
 
         mock_memory = _mock_incident_memory_service(None)
 
-        mock_http_client = _make_async_ollama_mock("Fresh RCA explanation")
-
-        with patch(
-            "services.explain.httpx.AsyncClient",
-            return_value=mock_http_client,
-        ):
+        with patch("services.explain.llm_chat", return_value="Fresh RCA explanation"):
 
             service = ExplainService(
                 search_service=_mock_search_service([]),
@@ -212,7 +191,7 @@ class TestExplainService:
     async def test_low_similarity_does_not_use_cache(self):
         """
         Cached incidents below the similarity threshold
-        should not bypass Ollama generation.
+        should not bypass LLM generation.
         """
 
         cached_incident = MagicMock()
@@ -221,12 +200,7 @@ class TestExplainService:
 
         mock_memory = _mock_incident_memory_service(cached_incident)
 
-        mock_http_client = _make_async_ollama_mock("Fresh explanation from Ollama")
-
-        with patch(
-            "services.explain.httpx.AsyncClient",
-            return_value=mock_http_client,
-        ):
+        with patch("services.explain.llm_chat", return_value="Fresh explanation from GLM"):
 
             service = ExplainService(
                 search_service=_mock_search_service([]),
@@ -237,20 +211,16 @@ class TestExplainService:
                 ExplainRequest(error_message="new unseen failure")
             )
 
-        assert result.explanation == "Fresh explanation from Ollama"
+        assert result.explanation == "Fresh explanation from GLM"
 
         mock_memory.store_incident.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_ollama_connect_error_propagates(self):
-        """ConnectError from Ollama must propagate (route maps it to 503)."""
+    async def test_llm_connect_error_propagates(self):
+        """ConnectError from LLM must propagate (route maps it to 503)."""
         mock_search = _mock_search_service([])
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("services.explain.httpx.AsyncClient", return_value=mock_client):
+        with patch("services.explain.llm_chat", side_effect=httpx.ConnectError("refused")):
             mock_incident_memory = MagicMock()
             mock_incident_memory.search_similar_incident.return_value = None
 
@@ -262,17 +232,14 @@ class TestExplainService:
                 await service.explain(ExplainRequest(error_message="test"))
 
     @pytest.mark.asyncio
-    async def test_ollama_timeout_propagates(self):
-        """TimeoutException from Ollama must propagate (route maps it to 504)."""
+    async def test_llm_timeout_propagates(self):
+        """TimeoutException from LLM must propagate (route maps it to 504)."""
         mock_search = _mock_search_service([])
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(
-            side_effect=httpx.ReadTimeout("timed out", request=MagicMock())
-        )
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("services.explain.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "services.explain.llm_chat",
+            side_effect=httpx.ReadTimeout("timed out", request=MagicMock()),
+        ):
             mock_incident_memory = MagicMock()
             mock_incident_memory.search_similar_incident.return_value = None
 
@@ -284,12 +251,11 @@ class TestExplainService:
                 await service.explain(ExplainRequest(error_message="test"))
 
     @pytest.mark.asyncio
-    async def test_empty_context_still_calls_ollama(self):
-        """Even with zero context logs Ollama should still be called."""
+    async def test_empty_context_still_calls_llm(self):
+        """Even with zero context logs GLM should still be called."""
         mock_search = _mock_search_service([])
-        mock_http_client = _make_async_ollama_mock("No context available.")
 
-        with patch("services.explain.httpx.AsyncClient", return_value=mock_http_client):
+        with patch("services.explain.llm_chat", return_value="No context available."):
             mock_incident_memory = MagicMock()
             mock_incident_memory.search_similar_incident.return_value = None
 
@@ -303,12 +269,11 @@ class TestExplainService:
         assert result.context_logs == []
 
     @pytest.mark.asyncio
-    async def test_empty_ollama_response_returns_empty_string(self):
-        """An empty Ollama 'response' field should not raise — return '' ."""
+    async def test_empty_llm_response_returns_empty_string(self):
+        """An empty GLM response should not raise — return '' ."""
         mock_search = _mock_search_service([])
-        mock_http_client = _make_async_ollama_mock("")
 
-        with patch("services.explain.httpx.AsyncClient", return_value=mock_http_client):
+        with patch("services.explain.llm_chat", return_value=""):
             mock_incident_memory = MagicMock()
             mock_incident_memory.search_similar_incident.return_value = None
 
@@ -356,7 +321,7 @@ class TestExplainRoute:
         mock_response = ExplainResponse(
             explanation="The DB connection pool is exhausted.",
             context_logs=[],
-            model="llama3",
+            model="glm-5.1",
         )
         with patch("routes.explain._service") as mock_svc:
             mock_svc.explain = AsyncMock(return_value=mock_response)
@@ -368,15 +333,15 @@ class TestExplainRoute:
         assert response.status_code == 200
         data = response.json()
         assert "explanation" in data
-        assert data["model"] == "llama3"
+        assert data["model"] == "glm-5.1"
 
-    def test_ollama_unreachable_returns_503(self, client):
+    def test_llm_unreachable_returns_503(self, client):
         with patch("routes.explain._service") as mock_svc:
             mock_svc.explain = AsyncMock(side_effect=httpx.ConnectError("refused"))
             response = client.post("/explain", json={"error_message": "test"})
         assert response.status_code == 503
 
-    def test_ollama_timeout_returns_504(self, client):
+    def test_llm_timeout_returns_504(self, client):
         with patch("routes.explain._service") as mock_svc:
             mock_svc.explain = AsyncMock(
                 side_effect=httpx.ReadTimeout("timed out", request=MagicMock())
@@ -384,7 +349,7 @@ class TestExplainRoute:
             response = client.post("/explain", json={"error_message": "test"})
         assert response.status_code == 504
 
-    def test_ollama_http_error_returns_502(self, client):
+    def test_llm_http_error_returns_502(self, client):
         mock_http_error = httpx.HTTPStatusError(
             "Internal Server Error",
             request=MagicMock(),

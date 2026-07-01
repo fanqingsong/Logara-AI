@@ -1,10 +1,13 @@
 """
-AI service routes including Ollama model status.
+AI service routes including LLM status.
 """
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
+
+from core.settings import get_settings
+from integrations.llm import llm_health_check
 
 logger = logging.getLogger(__name__)
 
@@ -12,39 +15,27 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
 @router.get("/status")
-async def get_ai_status(request: Request):
+async def get_ai_status():
     """
-    Get the status of AI models (particularly Ollama).
-    
-    Returns current state of the Ollama model manager including:
-    - status: Current state (idle, checking, pulling, ready, failed)
-    - model: Model name being managed
-    - progress: Download progress percentage (0-100)
-    - error: Error message if status is failed
+    Get the status of the LLM service.
+
+    Returns the configured LLM model name and endpoint reachability.
     """
+    settings = get_settings()
     try:
-        ollama_manager = request.app.state.ollama_manager
-        status = ollama_manager.get_status()
-        
+        result = llm_health_check()
+        healthy = result.get("status_code", 503) < 500
         return {
-            "status": status["status"],
-            "model": status["model"],
-            "progress": status["progress"],
-            "error": status["error"],
-        }
-    except AttributeError:
-        logger.error("Ollama manager not initialized")
-        return {
-            "status": "failed",
-            "model": None,
-            "progress": 0,
-            "error": "Ollama manager not initialized",
+            "status": "ready" if healthy else "unhealthy",
+            "model": settings.llm_model,
+            "endpoint": settings.llm_base_url,
+            "error": result.get("error") if not healthy else None,
         }
     except Exception as e:
         logger.error(f"Error getting AI status: {e}", exc_info=True)
         return {
             "status": "failed",
-            "model": None,
-            "progress": 0,
+            "model": settings.llm_model,
+            "endpoint": settings.llm_base_url,
             "error": str(e),
         }

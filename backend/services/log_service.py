@@ -1,14 +1,14 @@
-import os
 import uuid
 import logging
-import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 
-import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from qdrant_client.http.models import PointStruct
 
+from core.settings import get_settings
+from integrations.embedding import embed_texts
+from integrations.llm import llm_chat
 from utils.constants import (
     SCHEMA_TIMESTAMP,
     SCHEMA_LEVEL,
@@ -20,10 +20,7 @@ from utils.constants import (
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "llama3")
 QDRANT_COLLECTION = "logs"
-VECTOR_SIZE = 384
 
 
 class LogService:
@@ -37,6 +34,7 @@ class LogService:
         """
         if self._collection_verified:
             return
+        settings = get_settings()
         try:
             collections = self.qclient.get_collections().collections
             collection_names = [c.name for c in collections]
@@ -44,7 +42,7 @@ class LogService:
                 self.qclient.create_collection(
                     collection_name=QDRANT_COLLECTION,
                     vectors_config=qmodels.VectorParams(
-                        size=VECTOR_SIZE,
+                        size=settings.embedding_dimensions,
                         distance=qmodels.Distance.COSINE
                     ),
                 )
@@ -55,37 +53,11 @@ class LogService:
 
 
     def get_embedding(self, text: str) -> List[float]:
-        """
-        Generate vector embedding using local Ollama service.
-        Falls back to a deterministic hash-based mock vector if Ollama is unreachable.
-        """
-        try:
-            url = f"{OLLAMA_BASE_URL}/api/embeddings"
-            response = httpx.post(
-                url,
-                json={"model": LOCAL_LLM_MODEL, "prompt": text},
-                timeout=5.0
-            )
-            if response.status_code == 200:
-                emb = response.json().get("embedding")
-                if isinstance(emb, list) and len(emb) > 0:
-                    # Adjust dimensions if necessary to match VECTOR_SIZE
-                    if len(emb) != VECTOR_SIZE:
-                        if len(emb) > VECTOR_SIZE:
-                            emb = emb[:VECTOR_SIZE]
-                        else:
-                            emb = emb + [0.0] * (VECTOR_SIZE - len(emb))
-                    return emb
-        except Exception as e:
-            logger.debug(f"Ollama embedding lookup failed: {e}. Using deterministic mock vector.")
-
-        # Deterministic mock fallback
-        h = hashlib.sha256(text.encode('utf-8')).digest()
-        mock_vec = []
-        for i in range(VECTOR_SIZE):
-            val = (h[i % len(h)] / 127.5) - 1.0
-            mock_vec.append(val)
-        return mock_vec
+        """Generate vector embedding using the SiliconFlow embedding service."""
+        vectors = embed_texts([text])
+        if vectors and isinstance(vectors[0], list) and len(vectors[0]) > 0:
+            return vectors[0]
+        return []
 
     def store_log(self, parsed_log: Dict[str, Any], raw_log: str) -> str:
         """
@@ -186,7 +158,7 @@ class LogService:
 
     def semantic_search(self, query: str, limit: int = 5) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """
-        Perform vector similarity search on logs and use Ollama to synthesize an answer.
+        Perform vector similarity search on logs and use GLM to synthesize an answer.
         """
         if limit < 1 or limit > 50:
             raise ValueError("Result limit must be between 1 and 50")
@@ -207,7 +179,7 @@ class LogService:
         if not logs:
             return [], "No matching logs found."
 
-        # Attempt to synthesize natural language query response using Ollama
+        # Attempt to synthesize natural language query response using GLM
         answer = None
         try:
             log_context = "\n".join(
@@ -224,20 +196,9 @@ class LogService:
                 f"Answer:"
             )
 
-            url = f"{OLLAMA_BASE_URL}/api/generate"
-            response = httpx.post(
-                url,
-                json={
-                    "model": LOCAL_LLM_MODEL,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=10.0
-            )
-            if response.status_code == 200:
-                answer = response.json().get("response")
+            answer = llm_chat(prompt)
         except Exception as e:
-            logger.debug(f"Ollama natural language synthesis failed: {e}")
-            answer = "Unable to contact Ollama for natural language summary. Please check your connection."
+            logger.debug(f"GLM natural language synthesis failed: {e}")
+            answer = "Unable to contact LLM for natural language summary. Please check your connection."
 
         return logs, answer

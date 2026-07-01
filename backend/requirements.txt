@@ -5,10 +5,7 @@ pydantic
 pydantic-settings
 sqlalchemy
 qdrant-client
-langchain-ollama
-langchain-huggingface
-ollama
-sentence-transformers
+openai
 redis
 pytest
 httpx

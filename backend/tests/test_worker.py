@@ -21,15 +21,13 @@ def reset_metrics():
 
 
 @patch("worker.get_qdrant_client")
-@patch("worker.get_embedding_model")
-def test_process_log_valid_json(mock_get_model, mock_get_qdrant, caplog):
+@patch("worker.embed_texts")
+def test_process_log_valid_json(mock_embed_texts, mock_get_qdrant, caplog):
     reset_metrics()
     caplog.set_level(logging.INFO)
 
-    # Mock SentenceTransformer encode returning a vector
-    mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
-    mock_get_model.return_value = mock_model
+    # Mock embedding returning a vector
+    mock_embed_texts.return_value = [[0.1] * 1024]
 
     # Mock Qdrant client methods
     mock_q_client = MagicMock()
@@ -74,7 +72,7 @@ def test_process_log_valid_json(mock_get_model, mock_get_qdrant, caplog):
     assert second_points[0].payload["service_id"] == "auth-service"
     assert second_points[0].payload["level"] == "ERROR"
     assert second_points[0].payload["message"] == "Out of memory exception at address 0x1234"
-    assert second_points[0].vector == [0.1] * 384
+    assert second_points[0].vector == [0.1] * 1024
 
 
 def test_process_log_invalid_json(caplog):
@@ -130,15 +128,13 @@ def test_process_log_non_dict_payload(caplog):
 
 
 @patch("worker.get_qdrant_client")
-@patch("worker.get_embedding_model")
-def test_process_log_embedding_failure(mock_get_model, mock_get_qdrant, caplog):
+@patch("worker.embed_texts")
+def test_process_log_embedding_failure(mock_embed_texts, mock_get_qdrant, caplog):
     reset_metrics()
     caplog.set_level(logging.ERROR)
 
     # Force embedding exception
-    mock_model = MagicMock()
-    mock_model.encode.side_effect = Exception("Model model loading error")
-    mock_get_model.return_value = mock_model
+    mock_embed_texts.side_effect = Exception("Embedding service error")
 
     payload = json.dumps({
         "parsed": {
@@ -155,15 +151,13 @@ def test_process_log_embedding_failure(mock_get_model, mock_get_qdrant, caplog):
 
 
 @patch("worker.get_qdrant_client")
-@patch("worker.get_embedding_model")
-def test_process_log_qdrant_failure(mock_get_model, mock_get_qdrant, caplog):
+@patch("worker.embed_texts")
+def test_process_log_qdrant_failure(mock_embed_texts, mock_get_qdrant, caplog):
     reset_metrics()
     caplog.set_level(logging.ERROR)
 
     # Mock encoder successfully
-    mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
-    mock_get_model.return_value = mock_model
+    mock_embed_texts.return_value = [[0.1] * 1024]
 
     # Force Qdrant connection exception
     mock_q_client = MagicMock()
@@ -355,14 +349,12 @@ def test_process_log_whitespace_only_payload(caplog):
 
 
 @patch("worker.get_qdrant_client")
-@patch("worker.get_embedding_model")
-def test_process_log_otel_service_name_extracted(mock_get_model, mock_get_qdrant):
+@patch("worker.embed_texts")
+def test_process_log_otel_service_name_extracted(mock_embed_texts, mock_get_qdrant):
     """service.name OTel key should be extracted as service_id."""
     reset_metrics()
 
-    mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.0] * 384)
-    mock_get_model.return_value = mock_model
+    mock_embed_texts.return_value = [[0.0] * 1024]
 
     mock_q_client = MagicMock()
     mock_get_qdrant.return_value = mock_q_client
@@ -387,14 +379,12 @@ def test_process_log_otel_service_name_extracted(mock_get_model, mock_get_qdrant
 
 
 @patch("worker.get_qdrant_client")
-@patch("worker.get_embedding_model")
-def test_process_log_missing_service_falls_back_to_sentinel(mock_get_model, mock_get_qdrant):
+@patch("worker.embed_texts")
+def test_process_log_missing_service_falls_back_to_sentinel(mock_embed_texts, mock_get_qdrant):
     """No service metadata at all — service_id must be 'unknown_service'."""
     reset_metrics()
 
-    mock_model = MagicMock()
-    mock_model.encode.return_value = MagicMock(tolist=lambda: [0.0] * 384)
-    mock_get_model.return_value = mock_model
+    mock_embed_texts.return_value = [[0.0] * 1024]
 
     mock_q_client = MagicMock()
     mock_get_qdrant.return_value = mock_q_client

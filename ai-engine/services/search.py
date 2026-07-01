@@ -5,7 +5,6 @@ semantically similar log vectors, with optional service_id partitioning.
 import logging
 from typing import Optional
 
-from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 
 try:
@@ -14,23 +13,14 @@ except ImportError:
     from qdrant_client.http.models import Filter, FieldCondition, MatchValue  # type: ignore
 
 from core.settings import get_settings
+from integrations.embedding import embed_text
 from schemas.search import SearchResult
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded module globals — avoids loading the model at import time so
+# Lazy-loaded module globals — avoids loading the client at import time so
 # unit tests remain fast and offline.
-_embedding_model: Optional[SentenceTransformer] = None
 _qdrant_client: Optional[QdrantClient] = None
-
-
-def get_embedding_model() -> SentenceTransformer:
-    global _embedding_model
-    if _embedding_model is None:
-        settings = get_settings()
-        logger.info(f"Loading embedding model '{settings.embedding_model_name}'...")
-        _embedding_model = SentenceTransformer(settings.embedding_model_name)
-    return _embedding_model
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -39,6 +29,11 @@ def get_qdrant_client() -> QdrantClient:
         settings = get_settings()
         _qdrant_client = QdrantClient(url=settings.qdrant_url, timeout=5)
     return _qdrant_client
+
+
+def get_query_embedding(query: str) -> list[float]:
+    """Generate an embedding vector for a query via SiliconFlow."""
+    return embed_text(query)
 
 
 class SearchService:
@@ -75,8 +70,7 @@ class SearchService:
         settings = get_settings()
 
         # 1. Embed the query
-        model = get_embedding_model()
-        vector = model.encode(query).tolist()
+        vector = get_query_embedding(query)
 
         # 2. Build optional service_id filter — reuses the keyword index
         #    created by the backend worker for O(1) partition lookup.

@@ -3,14 +3,13 @@ import json
 import httpx
 from app_factory import create_app
 from fastapi import Body, Response, HTTPException
-from integrations.ollama import ollama_client
+from integrations.llm import llm_health_check
 from integrations.qdrant import qdrant_client
 from integrations.redis import redis_client
 from qdrant_client import QdrantClient
 from utils.parser import PARSER_METRICS, LogParser
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 log_store: list[dict] = []
 total_logs_ingested: int = 0
 
@@ -108,13 +107,16 @@ async def health_check(response: Response):
         services["qdrant"] = {"status": "unhealthy", "error": str(e)}
 
     try:
-        r = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3.0)
-        if r.status_code == 200:
-            services["ollama"] = {"status": "healthy"}
+        result = llm_health_check()
+        if result.get("status_code", 503) < 500:
+            services["llm"] = {"status": "healthy"}
         else:
-            services["ollama"] = {"status": "unhealthy", "error": f"HTTP {r.status_code}"}
+            services["llm"] = {
+                "status": "unhealthy",
+                "error": result.get("error", f"HTTP {result['status_code']}"),
+            }
     except Exception as e:
-        services["ollama"] = {"status": "unhealthy", "error": str(e)}
+        services["llm"] = {"status": "unhealthy", "error": str(e)}
 
     overall = "unhealthy" if any(
         s["status"] == "unhealthy" for s in services.values()

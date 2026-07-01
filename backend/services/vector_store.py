@@ -14,6 +14,7 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from core.settings import get_settings
 from utils.service_id import normalize_service_id, validate_service_id
 
 
@@ -55,7 +56,9 @@ class QdrantVectorStore:
         self.client = client
         self.collection_name = collection_name
 
-    def ensure_collection(self, vector_size: int = 384) -> None:
+    def ensure_collection(self, vector_size: int | None = None) -> None:
+        if vector_size is None:
+            vector_size = get_settings().embedding_dimensions
         try:
             if self.client.collection_exists(self.collection_name):
                 return

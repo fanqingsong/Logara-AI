@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime
 import time
 
-from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 try:
     from qdrant_client.models import PointStruct
 except ImportError:
     from qdrant_client.http.models import PointStruct
+
+from integrations.embedding import embed_texts
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,10 @@ class BatchLogProcessor:
         self,
         batch_size: int = 32,
         max_batch_wait_ms: int = 100,
-        embedding_model: Optional[SentenceTransformer] = None,
         qdrant_client: Optional[QdrantClient] = None,
     ):
         self.batch_size = batch_size
         self.max_batch_wait_ms = max_batch_wait_ms
-        self.embedding_model = embedding_model
         self.qdrant_client = qdrant_client
         self.pending_logs: List[Dict[str, Any]] = []
         self.pending_since = time.time()
@@ -123,33 +122,28 @@ class BatchLogProcessor:
         return processed_logs
 
     async def _get_embeddings(self, messages: List[str]) -> List[List[float]]:
-        if not self.embedding_model:
-            return [[] for _ in messages]
-
         uncached_messages = []
         uncached_indices = []
 
         for i, msg in enumerate(messages):
             msg_hash = hash(msg) % (2**31)
             if msg_hash in self.embedding_cache:
-                uncached_messages.append(None)
+                pass
             else:
                 uncached_messages.append(msg)
                 uncached_indices.append((i, msg_hash, msg))
 
-        if uncached_messages and uncached_indices:
-            new_messages = [m for m, _ in [(msg, i) for i, msg in enumerate(messages) if msg not in [x[2] for x in uncached_indices]]]
-
+        if uncached_messages:
             loop = asyncio.get_event_loop()
             embeddings_result = await loop.run_in_executor(
                 None,
-                lambda: self.embedding_model.encode(new_messages, batch_size=32),
+                lambda: embed_texts(uncached_messages),
             )
 
             for (idx, msg_hash, msg), embedding in zip(
                 uncached_indices, embeddings_result
             ):
-                self.embedding_cache[msg_hash] = embedding.tolist()
+                self.embedding_cache[msg_hash] = embedding
                 if len(self.embedding_cache) > self.cache_size:
                     oldest_key = next(iter(self.embedding_cache))
                     del self.embedding_cache[oldest_key]
@@ -208,17 +202,14 @@ class ParallelLogProcessor:
         self,
         num_workers: int = 4,
         batch_size: int = 32,
-        embedding_model: Optional[SentenceTransformer] = None,
         qdrant_client: Optional[QdrantClient] = None,
     ):
         self.num_workers = num_workers
         self.batch_size = batch_size
-        self.embedding_model = embedding_model
         self.qdrant_client = qdrant_client
         self.workers: List[BatchLogProcessor] = [
             BatchLogProcessor(
                 batch_size=batch_size,
-                embedding_model=embedding_model,
                 qdrant_client=qdrant_client,
             )
             for _ in range(num_workers)

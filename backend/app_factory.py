@@ -19,7 +19,6 @@ from routes.alerts import router as alerts_router
 from routes.security import router as security_router
 from services.ingestion import IngestionService
 from services.log_service import LogService
-from utils.ollama_manager import OllamaModelManager
 from utils.redaction import build_default_redactor
 
 
@@ -35,10 +34,6 @@ async def lifespan(app: FastAPI):
     )
 
     app.state.log_service = LogService(qdrant_client)
-
-    # Initialize Ollama manager for model bootstrap
-    app.state.ollama_manager = OllamaModelManager()
-    await app.state.ollama_manager.bootstrap()
 
     yield
     qdrant_client.close()

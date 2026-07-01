@@ -6,11 +6,9 @@ except ImportError:
     from qdrant_client.http.models import PointStruct  # type: ignore
 
 from core.settings import get_settings
+from integrations.embedding import embed_text
 from schemas.incident_memory import IncidentMemoryResult
-from services.search import (
-    get_embedding_model,
-    get_qdrant_client,
-)
+from services.search import get_qdrant_client
 
 
 class IncidentMemoryService:
@@ -22,9 +20,7 @@ class IncidentMemoryService:
 
         settings = get_settings()
 
-        model = get_embedding_model()
-
-        vector = model.encode(query).tolist()
+        vector = embed_text(query)
 
         client = get_qdrant_client()
 
@@ -57,11 +53,7 @@ class IncidentMemoryService:
         service_id: str | None = None,
     ):
 
-        settings = get_settings()
-
-        model = get_embedding_model()
-
-        vector = model.encode(error_message).tolist()
+        vector = embed_text(error_message)
 
         client = get_qdrant_client()
 

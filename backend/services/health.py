@@ -4,7 +4,7 @@ Health-check service helpers.
 
 import httpx
 
-from integrations.ollama import ollama_client
+from integrations.llm import llm_health_check
 from integrations.qdrant import qdrant_client
 from integrations.redis import redis_client
 
@@ -26,18 +26,18 @@ class HealthService:
             services["qdrant"] = {"status": "unhealthy", "error": str(exc)}
 
         try:
-            result = ollama_client.health_check()
-            if result["status_code"] == 200:
-                services["ollama"] = {"status": "healthy"}
+            result = llm_health_check()
+            if result.get("status_code", 503) < 500:
+                services["llm"] = {"status": "healthy"}
             else:
-                services["ollama"] = {
+                services["llm"] = {
                     "status": "unhealthy",
-                    "error": f"HTTP {result['status_code']}",
+                    "error": result.get("error", f"HTTP {result['status_code']}"),
                 }
         except httpx.HTTPError as exc:
-            services["ollama"] = {"status": "unhealthy", "error": str(exc)}
+            services["llm"] = {"status": "unhealthy", "error": str(exc)}
         except Exception as exc:
-            services["ollama"] = {"status": "unhealthy", "error": str(exc)}
+            services["llm"] = {"status": "unhealthy", "error": str(exc)}
 
         overall = (
             "unhealthy"

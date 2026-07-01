@@ -45,12 +45,12 @@ function Home() {
 
           <div className="ui-card glass-surface p-8 rounded-3xl border border-neutral-800 hover:border-cyan-500/40 hover:-translate-y-1">
             <h2 className="text-2xl font-semibold mb-4">
-              Local First AI
+              AI-Powered Analysis
             </h2>
 
             <p className="text-neutral-400">
-              Built with Ollama for secure local processing of sensitive
-              infrastructure logs.
+              Built with GLM for intelligent root-cause analysis and
+              natural language insights from your infrastructure logs.
             </p>
           </div>
 
@@ -105,7 +105,7 @@ function Home() {
               <li>↓</li>
               <li>Log Processor</li>
               <li>↓</li>
-              <li>Qdrant + Ollama</li>
+              <li>Qdrant + GLM</li>
             </ul>
           </div>
 

@@ -8,9 +8,9 @@ This document provides a detailed technical overview of how Logara AI processes 
 
 1. **Ingestion**: Logs are collected from multiple sources (Docker, Kubernetes, System Logs, Application SDKs) and sent to the **Ingestion Service**.
 2. **Preprocessing**: The logs are cleaned, timestamps are normalized, and metadata (service name, log level, host) is extracted.
-3. **Embedding**: Each log entry is converted into a high-dimensional vector using a sentence-transformer model.
+3. **Embedding**: Each log entry is converted into a high-dimensional vector using SiliconFlow's embedding API (BAAI/bge-m3, 1024 dimensions).
 4. **Storage**: These vectors are stored in **Qdrant** (Vector DB) for fast semantic retrieval.
-5. **Analysis**: When a user queries a log or an anomaly is detected, the **AI Engine** retrieves relevant context from the Vector DB and sends it to a **Local LLM** (via **Ollama**) for summarization and root cause analysis.
+5. **Analysis**: When a user queries a log or an anomaly is detected, the **AI Engine** retrieves relevant context from the Vector DB and sends it to **GLM** (via OpenAI-compatible API) for summarization and root cause analysis.
 
 ---
 
@@ -49,4 +49,4 @@ Logara AI is designed to be **Docker-first**. This means:
 ## 🛡️ Security & Privacy
 
 - **PII Redaction**: Before logs are sent to the LLM, Logara AI includes an optional step to mask PII (Emails, IP Addresses, Passwords).
-- **Local Model Support**: For air-gapped or privacy-sensitive environments, Logara AI can interface with local models via Ollama.
+- **LLM Integration**: Logara AI uses GLM (via OpenAI-compatible API) for root-cause analysis, with configurable base URL and API key for flexible deployment.

@@ -112,12 +112,12 @@ function Docs() {
             "
           >
             <h3 className="text-xl font-semibold text-emerald-400 mb-4">
-              Local AI Processing
+              AI-Powered Insights
             </h3>
 
             <p className="text-neutral-400 leading-8">
-              Process sensitive logs locally through Ollama without
-              external data exposure.
+              Process and analyze logs with GLM for intelligent
+              root-cause analysis and natural language insights.
             </p>
           </div>
 
@@ -182,7 +182,7 @@ function Docs() {
               </span>
 
               <p className="text-neutral-400 mt-3 leading-8">
-                Redis Queue → Log Processor → Qdrant Vector DB → Ollama
+                Redis Queue → Log Processor → Qdrant Vector DB → GLM
               </p>
             </div>
 
