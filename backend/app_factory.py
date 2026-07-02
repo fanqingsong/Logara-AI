@@ -48,11 +48,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    allowed_origins = (
-        settings.cors_allowed_origins.split(",")
-        if hasattr(settings, "cors_allowed_origins")
-        else ["http://localhost:3000"]
-    )
+    allowed_origins = [
+        origin.strip()
+        for origin in settings.cors_allowed_origins.split(",")
+        if origin.strip()
+    ]
 
     app.add_middleware(
         CORSMiddleware,

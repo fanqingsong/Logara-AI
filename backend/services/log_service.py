@@ -2,6 +2,7 @@ import uuid
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 
+from integrations.qdrant import vector_search
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from qdrant_client.http.models import PointStruct
@@ -141,7 +142,15 @@ class LogService:
             with_vectors=False
         )
 
-        logs = [r.payload for r in records if r.payload]
+        logs = []
+        for record in records:
+            if not record.payload:
+                continue
+            log = dict(record.payload)
+            log.setdefault("id", str(record.id))
+            log.setdefault("level", "INFO")
+            log.setdefault("message", "")
+            logs.append(log)
 
         # Sort descending by timestamp
         def get_ts(log):
@@ -166,11 +175,12 @@ class LogService:
         self._ensure_collection()
         query_vector = self.get_embedding(query)
 
-        results = self.qclient.search(
+        results = vector_search(
+            self.qclient,
             collection_name=QDRANT_COLLECTION,
             query_vector=query_vector,
             limit=limit,
-            with_payload=True
+            with_payload=True,
         )
 
         logs = [r.payload for r in results if r.payload]

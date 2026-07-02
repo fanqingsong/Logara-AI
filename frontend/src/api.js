@@ -1,4 +1,5 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Leave VITE_API_URL unset in local dev to route through the Vite proxy (vite.config.js).
+const BASE_URL = import.meta.env.VITE_API_URL || "";
 
 export async function fetchDashboard() {
   const res = await fetch(`${BASE_URL}/dashboard`);

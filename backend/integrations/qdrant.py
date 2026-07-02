@@ -44,3 +44,43 @@ class ThreadSafeQdrantClient:
 
 
 qdrant_client = ThreadSafeQdrantClient()
+
+
+def vector_search(
+    client,
+    *,
+    collection_name: str,
+    query_vector: list[float],
+    limit: int = 10,
+    with_payload: bool = True,
+    query_filter=None,
+    score_threshold: float | None = None,
+):
+    """Search vectors using legacy ``search`` or modern ``query_points`` API."""
+    search = getattr(client, "search", None)
+    if callable(search):
+        kwargs = {
+            "collection_name": collection_name,
+            "query_vector": query_vector,
+            "limit": limit,
+            "with_payload": with_payload,
+        }
+        if query_filter is not None:
+            kwargs["query_filter"] = query_filter
+        if score_threshold is not None:
+            kwargs["score_threshold"] = score_threshold
+        return search(**kwargs)
+
+    kwargs = {
+        "collection_name": collection_name,
+        "query": query_vector,
+        "limit": limit,
+        "with_payload": with_payload,
+    }
+    if query_filter is not None:
+        kwargs["query_filter"] = query_filter
+    if score_threshold is not None:
+        kwargs["score_threshold"] = score_threshold
+
+    response = client.query_points(**kwargs)
+    return response.points

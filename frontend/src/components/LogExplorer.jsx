@@ -87,7 +87,7 @@ const LogExplorer = () => {
               <span className="text-neutral-500">[{log.timestamp}]</span>{' '}
               <span className={getLevelClass(log.level)}>{log.level}</span>
               {': '}{log.message}{' '}
-              <span className="text-neutral-500">({log.service})</span>
+              <span className="text-neutral-500">({log.service || log.service_id || log.metadata?.service || 'unknown'})</span>
             </div>
           ))
         )}

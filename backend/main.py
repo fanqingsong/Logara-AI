@@ -65,12 +65,32 @@ async def parser_metrics():
 
 @app.get("/dashboard")
 async def dashboard():
-    recent_logs = list(reversed(log_store[-10:]))
-    anomalies = sum(1 for log in log_store if log.get("level") == "ERROR")
-    active_services = len({log.get("service", "unknown") for log in log_store})
+    log_service = app.state.log_service
+    logs, total = log_service.get_logs(page=1, limit=500)
+
+    def _service_name(log: dict) -> str:
+        metadata = log.get("metadata") or {}
+        return (
+            log.get("service_id")
+            or metadata.get("service")
+            or metadata.get("service_id")
+            or "unknown"
+        )
+
+    recent_logs = [
+        {
+            "timestamp": log.get("timestamp", ""),
+            "level": log.get("level", "INFO"),
+            "message": log.get("message", ""),
+            "service": _service_name(log),
+        }
+        for log in logs[:10]
+    ]
+    anomalies = sum(1 for log in logs if log.get("level") == "ERROR")
+    active_services = len({_service_name(log) for log in logs})
 
     return {
-        "logs_processed": total_logs_ingested,
+        "logs_processed": total,
         "anomalies": anomalies,
         "active_services": active_services,
         "ai_insights": anomalies,
@@ -79,7 +99,7 @@ async def dashboard():
             "No anomalies detected."
             if anomalies == 0
             else f"{anomalies} ERROR-level events detected across {active_services} service(s). Review recent logs for details."
-        )
+        ),
     }
 
 @app.get("/logs")

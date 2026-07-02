@@ -24,6 +24,7 @@ class Settings(BaseSettings):
         "Backend for ingestion and analysis of distributed system logs"
     )
     app_version: str = "0.1.0"
+    cors_allowed_origins: str = "http://localhost:3000,http://localhost:5173"
     redis_queue_name: str = "log_queue"
 
     redis_host: str = "localhost"

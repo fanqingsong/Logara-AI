@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
         vector: Any
         payload: dict[str, Any]
 
+from integrations.qdrant import vector_search
 from models.log_cluster import ClusterDecision, LogCluster
 from utils.similarity import normalize_log_text, normalize_vector
 
@@ -262,22 +263,53 @@ class DuplicateClusteringService:
         ratio = min(100.0, ((occurrence_count - 1) / total_logs) * 100.0)
         return round(ratio, 2)
 
+    def _ensure_clusters_collection(self) -> None:
+        from core.settings import get_settings
+
+        settings = get_settings()
+        try:
+            if hasattr(self.qdrant_client, "collection_exists"):
+                exists = self.qdrant_client.collection_exists(self.clusters_collection)
+            else:
+                self.qdrant_client.get_collection(self.clusters_collection)
+                exists = True
+        except Exception:
+            exists = False
+
+        if exists:
+            return
+
+        try:
+            from qdrant_client.http.models import Distance, VectorParams
+
+            self.qdrant_client.create_collection(
+                collection_name=self.clusters_collection,
+                vectors_config=VectorParams(
+                    size=settings.embedding_dimensions,
+                    distance=Distance.COSINE,
+                ),
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to create clusters collection '%s': %s",
+                self.clusters_collection,
+                exc,
+            )
+            raise
+
     def _search_cluster(self, embedding: list[float]) -> list[Any] | None:
         try:
-            result = self.qdrant_client.search(
+            self._ensure_clusters_collection()
+            result = vector_search(
+                self.qdrant_client,
                 collection_name=self.clusters_collection,
                 query_vector=embedding,
                 limit=1,
                 with_payload=True,
             )
-        except TypeError:
-            result = self.qdrant_client.search(
-                collection_name=self.clusters_collection,
-                query_vector=embedding,
-                limit=1,
-                with_payload=True,
-                score_threshold=0.0,
-            )
+        except Exception as exc:
+            logger.debug("Cluster search unavailable: %s", exc)
+            return None
 
         if not isinstance(result, (list, tuple)) or not result:
             return None
@@ -338,8 +370,14 @@ class DuplicateClusteringService:
         )
 
     def _upsert_cluster(self, cluster: LogCluster, embedding: list[float]) -> None:
+        self._ensure_clusters_collection()
         payload = cluster.to_payload()
-        point = PointStruct(id=cluster.cluster_id, vector=embedding, payload=payload)
+        raw_id = str(cluster.cluster_id).removeprefix("cluster-")
+        try:
+            point_id = str(uuid.UUID(hex=raw_id)) if len(raw_id) == 32 else str(uuid.uuid4())
+        except ValueError:
+            point_id = str(uuid.uuid4())
+        point = PointStruct(id=point_id, vector=embedding, payload=payload)
         self.qdrant_client.upsert(collection_name=self.clusters_collection, points=[point])
 
     @staticmethod
