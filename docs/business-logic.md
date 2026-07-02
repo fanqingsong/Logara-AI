@@ -57,6 +57,396 @@ graph TB
     Root --> S4
 ```
 
+### 1.2 四大能力详解与示例
+
+---
+
+#### 能力一：语义搜索（Semantic Log Search）
+
+**解决什么问题**
+
+传统 `grep "timeout"` 只能匹配字面量，搜不到 *"connection pool exhausted"*、*"checkout stalled waiting for DB"* 这类语义相近但措辞不同的日志。Logara 把日志转成 1024 维向量（BAAI/bge-m3），在 Qdrant 里按**语义相似度**检索。
+
+**工作原理**
+
+1. 用户输入自然语言查询（如 `"支付环节数据库连接失败"`）
+2. 查询文本同样生成 embedding
+3. 在 Qdrant `logs` 集合中做 cosine 最近邻搜索
+4. **强制按 `service_id` 过滤**，避免把 `orders-api` 的日志混入 `payments-api` 的结果
+
+**与传统 grep 对比**
+
+| 场景 | grep | Logara 语义搜索 |
+|------|------|----------------|
+| 查 `"database timeout"` | 只命中含这两个词的日志 | 也能命中 `"Connection pool exhausted after 30s"` |
+| 跨服务排查 | 需分别 grep 各服务日志 | 必须指定 `service_id`，结果不串服 |
+| 拼写/措辞变化 | 完全匹配才命中 | 向量空间中的语义相近即可命中 |
+
+**示例：支付服务超时排查**
+
+假设 `payments-api` 曾写入以下日志（已通过 Worker 向量化）：
+
+```json
+{ "service_id": "payments-api", "level": "ERROR", "message": "Connection pool exhausted waiting for checkout-db" }
+{ "service_id": "payments-api", "level": "WARN",  "message": "Slow query on orders table took 4.2s" }
+{ "service_id": "orders-api",   "level": "ERROR", "message": "Connection pool exhausted waiting for checkout-db" }
+```
+
+开发者用自然语言搜索（**不会**搜到 `orders-api` 的日志）：
+
+```bash
+curl "http://localhost:8000/search?query=checkout%20database%20timeout&service_id=payments-api&severity=ERROR&limit=5"
+```
+
+**预期返回（示意）**
+
+```json
+{
+  "query": "checkout database timeout",
+  "service_id": "payments-api",
+  "limit": 5,
+  "results": [
+    {
+      "id": "a1b2c3...",
+      "score": 0.89,
+      "payload": {
+        "service_id": "payments-api",
+        "level": "ERROR",
+        "message": "Connection pool exhausted waiting for checkout-db",
+        "timestamp": "2026-07-02T10:15:00Z"
+      }
+    }
+  ]
+}
+```
+
+**关键代码路径：** `backend/routes/search.py` → `QdrantVectorStore.semantic_search()`
+
+**适用场景**
+
+- On-call 工程师用口语化描述快速定位相关错误
+- 按 `environment=production`、`severity=ERROR` 缩小范围
+- 微服务架构下按服务边界隔离检索
+
+---
+
+#### 能力二：根因分析（Root Cause Synthesis / Explain）
+
+**解决什么问题**
+
+找到相关日志后，工程师仍需要人工串联上下文、判断根因、想修复方案。Explain 能力用 **RAG（检索增强生成）** 自动完成这一步：先从 Qdrant 拉取相似历史日志作为上下文，再交给 GLM 生成 SRE 风格的分析报告。
+
+**工作原理**
+
+```mermaid
+sequenceDiagram
+    participant Dev as 开发者
+    participant AI as AI Engine
+    participant Cache as incident_memory
+    participant Q as Qdrant logs
+    participant LLM as GLM
+
+    Dev->>AI: POST /explain
+    AI->>Cache: 是否有过相似错误?
+    alt 相似度 ≥ 0.95
+        Cache-->>Dev: 直接返回历史解释（跳过 LLM）
+    else 缓存未命中
+        AI->>Q: 检索 Top-K 上下文日志
+        Q-->>AI: 相关日志列表
+        AI->>LLM: 错误 + 上下文 → 根因分析
+        LLM-->>AI: 解释 + 修复建议
+        AI->>Cache: 存入 incident_memory
+        AI-->>Dev: ExplainResponse
+    end
+```
+
+**示例：Redis 连接失败**
+
+**Step 1 — 先写入一批上下文日志**
+
+```bash
+curl -X POST http://localhost:8000/ingest -H "Content-Type: application/json" -d '{
+  "service_id": "cart-service",
+  "level": "WARN",
+  "message": "Redis latency p99 exceeded 200ms threshold"
+}'
+
+curl -X POST http://localhost:8000/ingest -H "Content-Type: application/json" -d '{
+  "service_id": "cart-service",
+  "level": "ERROR",
+  "message": "Connection refused to redis:6379 — maxclients reached"
+}'
+```
+
+**Step 2 — 请求根因解释**
+
+```bash
+curl -X POST http://localhost:8001/explain -H "Content-Type: application/json" -d '{
+  "error_message": "Connection refused to redis:6379",
+  "service_id": "cart-service",
+  "context_limit": 5
+}'
+```
+
+**Step 3 — 典型响应结构**
+
+```json
+{
+  "explanation": "1. 错误含义：cart-service 无法连接 Redis，连接被拒绝。\n\n2. 可能根因：结合上下文日志，Redis 延迟在错误前已升高（p99 > 200ms），且出现 maxclients 相关报错，说明 Redis 连接数耗尽，新连接被拒绝。\n\n3. 修复建议：\n   - 检查 Redis maxclients 配置与当前连接数\n   - 排查 cart-service 是否存在连接泄漏\n   - 考虑增加 Redis 实例或启用连接池上限",
+  "context_logs": [
+    {
+      "message": "Redis latency p99 exceeded 200ms threshold",
+      "level": "WARN",
+      "service_id": "cart-service",
+      "timestamp": "2026-07-02T10:12:00Z"
+    },
+    {
+      "message": "Connection refused to redis:6379 — maxclients reached",
+      "level": "ERROR",
+      "service_id": "cart-service",
+      "timestamp": "2026-07-02T10:13:05Z"
+    }
+  ],
+  "model": "glm-5.1"
+}
+```
+
+**Incident Memory 缓存示例**
+
+同一错误第二次出现时：
+
+```bash
+# 再次请求相同 error_message
+curl -X POST http://localhost:8001/explain -H "Content-Type: application/json" -d '{
+  "error_message": "Connection refused to redis:6379",
+  "service_id": "cart-service"
+}'
+```
+
+若向量相似度 ≥ **0.95**，直接返回缓存，`model` 字段显示 `"glm-5.1 (cached)"`，`context_logs` 为空——**节省 LLM 调用成本与延迟**。
+
+**关键代码路径：** `ai-engine/services/explain.py` → `ExplainService.explain()`
+
+**适用场景**
+
+- 新人 on-call 快速理解陌生错误
+- 重复性故障的秒级 RCA 响应
+- 把历史 incident 知识沉淀到 `incident_memory` 集合
+
+---
+
+#### 能力三：日志降噪（Semantic Duplicate Clustering）
+
+**解决什么问题**
+
+生产环境中，同一条错误可能在几秒内重复出现数千次（如 `"Database timeout for user 123"`、`"... user 456"`、`"... user 789"`）。若每条都写入 `logs` 集合，会造成：
+
+- Qdrant 存储膨胀
+- 语义搜索结果被重复日志淹没
+- Dashboard 噪声极大，难以看到"真正有多少种不同错误"
+
+Logara 在 Worker 异步管道中用**语义聚类**把"意思相同、细节不同"的日志合并。
+
+**工作原理**
+
+1. Worker 消费 Redis 队列，为每条日志生成 embedding
+2. 在 `log_clusters` 集合中搜索最近邻
+3. 相似度 **≥ 0.92**（默认）→ 判定为重复，**只更新 cluster 元数据，不写入 `logs`**
+4. 相似度 < 0.92 → 新建 cluster，同时写入 `logs` + `log_clusters`
+
+**示例：同一错误的三次出现**
+
+| 次序 | 原始日志 | Worker 行为 |
+|------|----------|-------------|
+| 第 1 条 | `ERROR: Database timeout for user 123` | 新建 cluster，写入 `logs` + `log_clusters` |
+| 第 2 条 | `ERROR: Database timeout for user 456` | 相似度 0.95 → `is_duplicate=true`，仅更新 cluster |
+| 第 3 条 | `ERROR: Database timeout for user 789` | 同上，`occurrence_count` 变为 3 |
+
+**聚类后的 cluster 元数据（写入 `log_clusters`）**
+
+```json
+{
+  "cluster_id": "cluster-abc123",
+  "representative_log": "ERROR: Database timeout for user 123",
+  "occurrence_count": 3,
+  "first_seen": "2026-07-02T10:00:00Z",
+  "last_seen": "2026-07-02T10:02:00Z",
+  "sample_logs": [
+    "ERROR: Database timeout for user 123",
+    "ERROR: Database timeout for user 456",
+    "ERROR: Database timeout for user 789"
+  ],
+  "similarity_score_average": 0.95,
+  "service_name": "payments-service",
+  "cluster_summary": "Error cluster: database timeout",
+  "cluster_label": "error-database-timeout"
+}
+```
+
+**与"不同错误"的对比**
+
+以下两条**不会**被合并（相似度低于 0.92）：
+
+```
+ERROR: Database timeout for user 123        → cluster A
+ERROR: Payment gateway returned HTTP 502    → cluster B（全新错误模式）
+```
+
+**降噪效果量化**
+
+```
+duplicate_reduction_percentage = ((occurrence_count - 1) / total_logs) × 100
+```
+
+上例中 3 条日志合并为 1 个 cluster + 1 条 `logs` 记录，降噪约 **66.7%**。
+
+**可调参数**
+
+| 环境变量 | 默认值 | 调优建议 |
+|----------|--------|----------|
+| `DUPLICATE_SIMILARITY_THRESHOLD` | `0.92` | 降低 → 更激进合并；提高 → 减少误合并 |
+| `MAX_CLUSTER_SAMPLE_SIZE` | `5` | cluster 中保留的样本条数 |
+| `ENABLE_DUPLICATE_CLUSTERING` | `true` | 冷启动时可设为 `false` 跳过聚类 |
+
+**关键代码路径：** `backend/worker.py` → `DuplicateClusteringService.assign_to_cluster()`
+
+**适用场景**
+
+- 高 QPS 服务的大量重复 ERROR 日志
+- 降低向量库存储与搜索噪声
+- Dashboard 展示"错误种类数"而非"错误条数"
+
+---
+
+#### 能力四：安全合规（Security-Aware Log Sanitization）
+
+**解决什么问题**
+
+日志里经常意外携带 JWT、API Key、邮箱、信用卡号等敏感信息。若这些原文进入 Redis 队列、Qdrant 向量库或 GLM 上下文，会造成**数据泄露与合规风险**。Logara 在**入队之前**强制脱敏，确保下游组件只看到清洗后的内容。
+
+**工作原理**
+
+```mermaid
+flowchart LR
+    Raw["原始日志<br/>含 JWT / API Key"] --> Redactor["Redactor.redact_with_summary()"]
+    Redactor --> Clean["脱敏后日志<br/>[JWT] / [API_KEY]"]
+    Clean --> Queue["Redis 队列"]
+    Clean --> Metrics["脱敏统计 metrics"]
+
+    Queue --> Worker["Worker 向量化"]
+    Worker --> Qdrant["Qdrant 存储"]
+    Qdrant --> LLM["GLM 分析"]
+
+    style Raw fill:#ffcccc
+    style Clean fill:#ccffcc
+```
+
+**内置脱敏规则（`backend/utils/redaction.py`）**
+
+| 规则标签 | 匹配内容 | 脱敏后 |
+|----------|----------|--------|
+| `JWT` | `eyJ...` 三段式 token | `[JWT]` |
+| `AWS_ACCESS_KEY` | `AKIA...` 16 位 | `[AWS_ACCESS_KEY]` |
+| `API_KEY` | `sk-`、`ghp_`、`xoxb-` 等前缀 | `[API_KEY]` |
+| `BEARER` | `Bearer eyJ...` | `[BEARER]` |
+| `EMAIL` | 标准邮箱格式 | `[EMAIL]` |
+| `CREDIT_CARD` | 13–19 位数字（Luhn 校验） | `[CREDIT_CARD]` |
+| `IPV4`（可选） | IPv4 地址 | `[IPV4]` |
+
+**示例：含敏感信息的日志接入**
+
+**接入前（客户端发送）**
+
+```json
+{
+  "service_id": "auth-service",
+  "level": "ERROR",
+  "message": "Login failed for user admin@company.com with token Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c and api_key sk-live-abc123xyz789secret"
+}
+```
+
+**入队后（Redis / Qdrant / LLM 实际看到的）**
+
+```
+Login failed for user [EMAIL] with token [BEARER] and api_key [API_KEY]
+```
+
+**脱敏统计（Redaction Observability）**
+
+每次脱敏会记录匹配摘要，便于运维审计：
+
+```json
+{
+  "redaction_summary": {
+    "EMAIL": 1,
+    "BEARER": 1,
+    "API_KEY": 1
+  }
+}
+```
+
+**独立安全 API 示例**
+
+不经过 ingestion 管道，也可单独调用脱敏接口：
+
+```bash
+# 检测敏感信息（不脱敏）
+curl -X POST http://localhost:8000/api/security/detect-sensitive \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Contact support@example.com or use key sk-test-1234567890abcdef"}'
+
+# 执行脱敏
+curl -X POST http://localhost:8000/api/security/redact \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Contact support@example.com or use key sk-test-1234567890abcdef"}'
+```
+
+**配置项**
+
+```bash
+REDACT_ENABLED=true                          # 总开关
+REDACT_PATTERNS=jwt,api_key,email,bearer     # 启用的规则
+REDACT_IPV4=false                            # 是否掩码 IP
+```
+
+**关键代码路径：** `backend/services/ingestion.py` → `Redactor.redact_with_summary()`（入队前调用）
+
+**适用场景**
+
+- 多租户 SaaS 平台的日志合规
+- 防止 API Key 通过日志泄露到 LLM 训练/推理上下文
+- 满足 GDPR / 等保等对 PII 的处理要求
+
+---
+
+### 1.3 四大能力协作：完整故障排查示例
+
+以下是一个四大能力**串联使用**的真实场景：
+
+**背景：** 生产环境 `payments-api` 在 10:00–10:05 出现大量结账失败告警。
+
+| 步骤 | 能力 | 操作 | 效果 |
+|------|------|------|------|
+| 1 | 安全合规 | 应用 SDK 上报含用户邮箱的 ERROR 日志 | 邮箱被脱敏后再入队，LLM 不会看到 PII |
+| 2 | 日志降噪 | 500 条 `"Database timeout for user N"` 重复 ERROR | 合并为 1 个 cluster，`occurrence_count=500` |
+| 3 | 语义搜索 | `GET /search?query=checkout database timeout&service_id=payments-api` | 命中 cluster 代表日志 + 相关 WARN |
+| 4 | 根因分析 | `POST /explain` 传入 `"Database timeout during checkout"` | GLM 结合上下文给出"连接池耗尽"根因与修复步骤 |
+| 5 | 根因分析（缓存） | 10 分钟后同类错误再次触发 Explain | Incident Memory 命中，秒级返回历史 RCA |
+
+```mermaid
+flowchart LR
+    A["① 安全合规<br/>脱敏入队"] --> B["② 日志降噪<br/>500条→1 cluster"]
+    B --> C["③ 语义搜索<br/>自然语言定位"]
+    C --> D["④ 根因分析<br/>RAG + GLM"]
+    D --> E["⑤ 缓存命中<br/>Incident Memory"]
+
+    style A fill:#ffe0e0
+    style B fill:#e0f0ff
+    style C fill:#e0ffe0
+    style D fill:#fff0e0
+    style E fill:#f0e0ff
+```
+
 ---
 
 ## 2. 系统架构总览
