@@ -39,8 +39,8 @@ graph TD
     D --> E[(Qdrant Vector DB)]
     end
 
-    subgraph "AI Engine"
-    E --> I[AI Engine Service]
+    subgraph "Insight Engine"
+    E --> I[Insight Engine Service]
     J[GLM LLM] <--> I
     end
 
@@ -62,7 +62,7 @@ sequenceDiagram
     participant Queue as Redis<br/>Queue
     participant Processor as Log<br/>Processor
     participant VectorDB as Qdrant<br/>Vector DB
-    participant AI as AI Engine<br/>+ GLM
+    participant AI as Insight Engine<br/>+ GLM
 
     Client->>Ingestor: POST /ingest (raw log)
     activate Ingestor
@@ -111,7 +111,7 @@ sequenceDiagram
 1. **Ingestion**: Client sends a log to the FastAPI ingestor endpoint
 2. **Redaction**: Sensitive data (API keys, emails, tokens) is stripped before queuing
 3. **Queueing**: Sanitized log is added to Redis for asynchronous processing
-4. **Processing**: Background worker consumes the job, generates embeddings, and stores vectors
+4. **Processing**: The log-processor consumes the job, generates embeddings, and stores vectors
 5. **Duplicate Clustering**: Similar logs are grouped by semantic similarity for noise reduction
 6. **Search**: When a user queries logs, semantic search retrieves relevant vectors from Qdrant
 7. **AI Synthesis**: GLM LLM synthesizes findings into actionable insights
@@ -150,10 +150,10 @@ This helps improve operational visibility while reducing the risk of sensitive d
 
 ### Semantic Duplicate Clustering
 
-The backend now supports semantic duplicate detection and clustering in the async worker pipeline.
+The backend now supports semantic duplicate detection and clustering in the async log-processor pipeline.
 
 - Embeddings are generated from a normalized semantic text representation.
-- The worker searches the `log_clusters` collection for the nearest semantic match.
+- The log-processor searches the `log_clusters` collection for the nearest semantic match.
 - Logs above the configured similarity threshold are attached to an existing cluster.
 - New logs create a fresh cluster and are persisted as a raw vector point for downstream search.
 
@@ -176,7 +176,7 @@ These are normalized into the same semantic cluster, and the cluster metadata is
 
 #### Example cluster payloads
 
-The worker persists cluster metadata in the `log_clusters` collection, and the dashboard-ready payload shape is:
+The log-processor persists cluster metadata in the `log_clusters` collection, and the dashboard-ready payload shape is:
 
 ```json
 {
@@ -207,7 +207,7 @@ The worker persists cluster metadata in the `log_clusters` collection, and the d
 }
 ```
 
-The worker also produces a lightweight decision payload during ingestion:
+The log-processor also produces a lightweight decision payload during ingestion:
 
 ```json
 {
@@ -404,7 +404,7 @@ Example response:
 
 - `POST /ingest` accepts either a raw `log_data` string or a structured JSON object.
 - `POST /v1/logs` accepts OpenTelemetry HTTP export payloads and normalizes them before queueing.
-- The worker processes queued payloads asynchronously and applies semantic duplicate clustering when enabled.
+- The log-processor processes queued payloads asynchronously and applies semantic duplicate clustering when enabled.
 ### Quick Start (Local Dev)
 
 1. **Clone & Setup**:
@@ -421,45 +421,38 @@ cp .env.example .env
 # Edit .env and set REDIS_PASSWORD
 ```
 
-2. **Start Infrastructure**:
+2. **Start the full stack (Docker Compose)**:
 
    ```bash
-   docker-compose up -d
+   docker compose up -d --build
    ```
 
-3. **Backend**:
+   This starts Qdrant, Redis, insight-engine (RAG/explain), backend, log-processor (embedding+clustering), and frontend (nginx on http://localhost:5174).
+
+   For **hot reload** during development:
 
    ```bash
-   cd backend
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+   ```
 
-   # In terminal 1: Start the ingestor API
+3. **Optional — run app services locally instead of in Compose**:
+
+   ```bash
+   # Backend (terminal 1)
+   cd backend && python -m venv venv && source venv/bin/activate
+   pip install -r requirements.txt
    fastapi dev main.py
 
-   # In terminal 2: Start the background log processor
+   # log-processor (if not using the compose log-processor service)
+   cd backend && source venv/bin/activate
    python worker.py
-   ```
 
-4. **AI Engine Service**:
-
-   ```bash
-   cd ai-engine
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-
-   # Start the AI Engine on port 8001
+   # insight-engine (if not using the compose insight-engine service)
+   cd insight-engine && source venv/bin/activate
    uvicorn main:app --port 8001
-   ```
 
-5. **Frontend**:
-
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
+   # Frontend
+   cd frontend && npm install && npm run dev
    ```
 
 ## CI/CD Validation
@@ -476,7 +469,7 @@ Current validation covers:
 - frontend dependency install, `eslint`, and production build
 - repository deploy prerequisite checks via `.github/scripts/validate_deploy.py`
 - Docker Compose configuration validation with `docker compose config`
-- backend smoke checks that import the FastAPI app and worker successfully
+- backend smoke checks that import the FastAPI app and log-processor successfully
 - changed-files-aware PR CI to avoid unnecessary jobs on smaller pull requests
 - backend coverage artifact generation in CI
 - Docker image build validation for backend and frontend images

@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from openai import APIConnectionError
 
 from integrations.embedding import embed_texts
 from integrations.qdrant import qdrant_client
@@ -74,6 +75,14 @@ async def semantic_search(
             "results": [_serialize_result(result) for result in results],
         }
 
+    except APIConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Embedding service unreachable. Check EMBEDDING_API_KEY and network "
+                "access to the configured embedding provider."
+            ),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,

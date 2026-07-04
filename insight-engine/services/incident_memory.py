@@ -1,14 +1,38 @@
+import logging
 import uuid
 
 try:
-    from qdrant_client.models import PointStruct
+    from qdrant_client.models import PointStruct, VectorParams, Distance
 except ImportError:
-    from qdrant_client.http.models import PointStruct  # type: ignore
+    from qdrant_client.http.models import PointStruct, VectorParams, Distance  # type: ignore
 
 from core.settings import get_settings
 from integrations.embedding import embed_text
 from schemas.incident_memory import IncidentMemoryResult
 from services.search import get_qdrant_client
+
+logger = logging.getLogger(__name__)
+
+
+def ensure_incident_memory_collection() -> None:
+    """Create the incident_memory collection if it does not yet exist."""
+    settings = get_settings()
+    client = get_qdrant_client()
+    existing = {c.name for c in client.get_collections().collections}
+    if settings.incident_memory_collection in existing:
+        return
+    client.create_collection(
+        collection_name=settings.incident_memory_collection,
+        vectors_config=VectorParams(
+            size=settings.embedding_dimensions,
+            distance=Distance.COSINE,
+        ),
+    )
+    logger.info(
+        "Created Qdrant collection '%s' (dim=%d)",
+        settings.incident_memory_collection,
+        settings.embedding_dimensions,
+    )
 
 
 class IncidentMemoryService:
@@ -24,12 +48,12 @@ class IncidentMemoryService:
 
         client = get_qdrant_client()
 
-        hits = client.search(
+        hits = client.query_points(
             collection_name=settings.incident_memory_collection,
-            query_vector=vector,
+            query=vector,
             limit=1,
             with_payload=True,
-        )
+        ).points
 
         if not hits:
             return None
@@ -52,7 +76,7 @@ class IncidentMemoryService:
         explanation: str,
         service_id: str | None = None,
     ):
-
+        settings = get_settings()
         vector = embed_text(error_message)
 
         client = get_qdrant_client()

@@ -17,6 +17,7 @@ from routes.parsing import router as parsing_router
 from routes.performance import router as performance_router
 from routes.alerts import router as alerts_router
 from routes.security import router as security_router
+from routes.embedding_map import router as embedding_map_router
 from services.ingestion import IngestionService
 from services.log_service import LogService
 from utils.redaction import build_default_redactor
@@ -90,5 +91,6 @@ def create_app() -> FastAPI:
     app.include_router(performance_router)
     app.include_router(alerts_router)
     app.include_router(security_router)
+    app.include_router(embedding_map_router)
 
     return app

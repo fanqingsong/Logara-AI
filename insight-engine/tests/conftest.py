@@ -1,5 +1,5 @@
 """
-Shared test fixtures and configuration for the ai-engine test suite.
+Shared test fixtures and configuration for the insight-engine test suite.
 """
 import pytest
 from unittest.mock import MagicMock

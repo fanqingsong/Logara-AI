@@ -3,6 +3,8 @@ import { Routes, Route } from 'react-router-dom';
 
 import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
+import Explore from './pages/Explore';
+import EmbeddingMap from './pages/EmbeddingMap';
 import Docs from './pages/Docs';
 import ScrollToHash from './components/ScrollToHash';
 
@@ -19,6 +21,8 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/explore" element={<Explore />} />
+          <Route path="/embedding-map" element={<EmbeddingMap />} />
           <Route path="/docs" element={<Docs />} />
         </Routes>
 

@@ -36,6 +36,13 @@ def _make_qdrant_hit(
     return hit
 
 
+def _make_query_response(hits: list | None = None) -> MagicMock:
+    """Build a mock Qdrant query_points() response wrapping .points."""
+    response = MagicMock()
+    response.points = hits or []
+    return response
+
+
 # ---------------------------------------------------------------------------
 # SearchService unit tests
 # ---------------------------------------------------------------------------
@@ -48,7 +55,7 @@ class TestSearchService:
     def test_returns_mapped_results(self, mock_embed):
         """Happy path: Qdrant returns hits → mapped to SearchResult list."""
         mock_embed.return_value = [0.1] * 1024
-        search_module._qdrant_client.search.return_value = [_make_qdrant_hit()]
+        search_module._qdrant_client.query_points.return_value = _make_query_response([_make_qdrant_hit()])
 
         results = self.service.search(query="database connection error")
 
@@ -64,7 +71,7 @@ class TestSearchService:
     def test_empty_qdrant_response_returns_empty_list(self, mock_embed):
         """Qdrant returns no hits → empty list, no exception."""
         mock_embed.return_value = [0.0] * 1024
-        search_module._qdrant_client.search.return_value = []
+        search_module._qdrant_client.query_points.return_value = _make_query_response([])
 
         results = self.service.search(query="something obscure")
 
@@ -74,11 +81,11 @@ class TestSearchService:
     def test_service_id_filter_passed_to_qdrant(self, mock_embed):
         """service_id kwarg must be translated into a Qdrant Filter."""
         mock_embed.return_value = [0.0] * 1024
-        search_module._qdrant_client.search.return_value = []
+        search_module._qdrant_client.query_points.return_value = _make_query_response([])
 
         self.service.search(query="timeout", service_id="payment-service")
 
-        call_kwargs = search_module._qdrant_client.search.call_args[1]
+        call_kwargs = search_module._qdrant_client.query_points.call_args[1]
         assert call_kwargs["query_filter"] is not None
 
         # Verify the filter targets service_id with the correct value
@@ -91,29 +98,29 @@ class TestSearchService:
     def test_no_service_id_filter_is_none(self, mock_embed):
         """When service_id is None the filter must not be sent to Qdrant."""
         mock_embed.return_value = [0.0] * 1024
-        search_module._qdrant_client.search.return_value = []
+        search_module._qdrant_client.query_points.return_value = _make_query_response([])
 
         self.service.search(query="timeout", service_id=None)
 
-        call_kwargs = search_module._qdrant_client.search.call_args[1]
+        call_kwargs = search_module._qdrant_client.query_points.call_args[1]
         assert call_kwargs["query_filter"] is None
 
     @patch("services.search.get_query_embedding")
     def test_whitespace_service_id_treated_as_no_filter(self, mock_embed):
         """Whitespace-only service_id must not generate a filter."""
         mock_embed.return_value = [0.0] * 1024
-        search_module._qdrant_client.search.return_value = []
+        search_module._qdrant_client.query_points.return_value = _make_query_response([])
 
         self.service.search(query="timeout", service_id="   ")
 
-        call_kwargs = search_module._qdrant_client.search.call_args[1]
+        call_kwargs = search_module._qdrant_client.query_points.call_args[1]
         assert call_kwargs["query_filter"] is None
 
     @patch("services.search.get_query_embedding")
     def test_qdrant_error_propagates(self, mock_embed):
         """Qdrant failure must propagate — the route layer maps it to 503."""
         mock_embed.return_value = [0.0] * 1024
-        search_module._qdrant_client.search.side_effect = Exception("connection refused")
+        search_module._qdrant_client.query_points.side_effect = Exception("connection refused")
 
         with pytest.raises(Exception, match="connection refused"):
             self.service.search(query="anything")
@@ -123,7 +130,7 @@ class TestSearchService:
         """Missing payload fields must fall back to safe defaults."""
         mock_embed.return_value = [0.0] * 1024
         hit = _make_qdrant_hit(payload={})  # completely empty payload
-        search_module._qdrant_client.search.return_value = [hit]
+        search_module._qdrant_client.query_points.return_value = _make_query_response([hit])
 
         results = self.service.search(query="test")
 

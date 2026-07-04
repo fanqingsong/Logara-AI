@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from core.settings import get_settings
 from routes.explain import router as explain_router
 from routes.search import router as search_router
+from services.incident_memory import ensure_incident_memory_collection
 from services.search import get_qdrant_client
 
 logging.basicConfig(
@@ -33,6 +34,10 @@ async def lifespan(app: FastAPI):
     established early, but no model warm-up is required (remote APIs).
     """
     logger.info("AI Engine starting up...")
+    try:
+        ensure_incident_memory_collection()
+    except Exception as e:
+        logger.warning(f"Could not ensure incident_memory collection: {e}")
     yield
     logger.info("AI Engine shut down.")
 

@@ -48,6 +48,6 @@ Optional filters:
 
 If `service_id` is invalid, the API rejects the request.
 
-If a legacy raw log has no detectable service identifier, the worker stores it under:
+If a legacy raw log has no detectable service identifier, the log-processor stores it under:
 
     unknown_service

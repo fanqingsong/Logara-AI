@@ -1,0 +1,89 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  filelog/simulator:
+    include:
+      - /var/log/simulator/*.log
+    start_at: end
+    operators:
+      - type: json_parser
+        id: simulator-json
+        parse_from: body
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: "%Y-%m-%dT%H:%M:%SZ"
+        severity:
+          parse_from: attributes.level
+          mapping:
+            trace: trace
+            debug: debug
+            info: info
+            warn: warn
+            error: error
+            fatal: fatal
+      - type: move
+        from: attributes.message
+        to: body
+
+  filelog/host:
+    include:
+      - /var/log/host/syslog
+      - /var/log/host/**/*.log
+    exclude:
+      - /var/log/host/simulator/**
+    start_at: end
+    operators:
+      - type: regex_parser
+        id: host-syslog
+        regex: '^(?P<timestamp>\w{3}\s+\d{1,2}\s+\S+)\s+(?P<hostname>\S+)\s+(?:(?P<service>[^\s:]+)(?:\[(?P<pid>\d+)\])?:\s*)?(?P<message>.*)$'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: "%b %d %H:%M:%S"
+        severity:
+          parse_from: body
+          mapping:
+            error: error
+            fail: error
+            warn: warn
+            warning: warn
+            info: info
+
+processors:
+  batch:
+    timeout: 2s
+    send_batch_size: 256
+
+  transform/service_name:
+    log_statements:
+      - context: log
+        statements:
+          - set(resource.attributes["service.name"], attributes["service_id"]) where attributes["service_id"] != nil
+          - set(resource.attributes["service.name"], attributes["service"]) where resource.attributes["service.name"] == nil and attributes["service"] != nil
+          - set(resource.attributes["service.name"], "host-syslog") where resource.attributes["service.name"] == nil
+
+exporters:
+  # Semantic pipeline: deduplicated vector indexing via backend → Redis → log-processor → Qdrant.
+  otlp_http/logara:
+    endpoint: http://backend:8000
+    encoding: json
+    tls:
+      insecure: true
+    compression: none
+
+  # Full-fidelity archive: every log record via Loki native OTLP (no deduplication).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp, filelog/simulator, filelog/host]
+      processors: [transform/service_name, batch]
+      exporters: [otlp_http/logara, otlphttp/loki]

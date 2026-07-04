@@ -1,6 +1,6 @@
 # Local override: remap Qdrant host ports to avoid conflict with the
 # existing foundation-qdrant-container bound to 6333/6334.
-# Internal container port stays 6333 so ai-engine's QDRANT_URL works.
+# Internal container port stays 6333 so insight-engine's QDRANT_URL works.
 services:
   qdrant:
     ports: !override

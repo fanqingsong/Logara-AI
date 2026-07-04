@@ -10,7 +10,7 @@ This document provides a detailed technical overview of how Logara AI processes 
 2. **Preprocessing**: The logs are cleaned, timestamps are normalized, and metadata (service name, log level, host) is extracted.
 3. **Embedding**: Each log entry is converted into a high-dimensional vector using SiliconFlow's embedding API (BAAI/bge-m3, 1024 dimensions).
 4. **Storage**: These vectors are stored in **Qdrant** (Vector DB) for fast semantic retrieval.
-5. **Analysis**: When a user queries a log or an anomaly is detected, the **AI Engine** retrieves relevant context from the Vector DB and sends it to **GLM** (via OpenAI-compatible API) for summarization and root cause analysis.
+5. **Analysis**: When a user queries a log or an anomaly is detected, the **Insight Engine** retrieves relevant context from the Vector DB and sends it to **GLM** (via OpenAI-compatible API) for summarization and root cause analysis.
 
 ---
 
@@ -22,7 +22,7 @@ This document provides a detailed technical overview of how Logara AI processes 
 - **Tech Stack**: FastAPI / Node.js
 - **Key Task**: Validates log formats and maintains high throughput using a buffer (Redis/Kafka).
 
-### 2. AI Engine (The Brain)
+### 2. Insight Engine (The Brain)
 
 - **Purpose**: Orchestrates the interaction between the data and the LLM.
 - **Strategy**: Uses **RAG (Retrieval-Augmented Generation)** to provide the LLM with the most relevant historical logs when analyzing a current error.

@@ -10,3 +10,6 @@ redis
 pytest
 httpx
 cryptography
+umap-learn
+wizmap
+ndjson

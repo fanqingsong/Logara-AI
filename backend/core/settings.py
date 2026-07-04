@@ -65,6 +65,7 @@ class Settings(BaseSettings):
         ]
     )
     redact_ipv4: bool = False
+    debug: bool = False
 
 
 @lru_cache

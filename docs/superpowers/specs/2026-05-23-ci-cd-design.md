@@ -13,7 +13,7 @@ Use a reusable workflow in `.github/workflows/repo-validation.yml` as the single
 - Backend validation installs `backend/requirements.txt`, compiles imports with `python -m compileall .`, and runs `pytest`.
 - Frontend validation installs from `package-lock.json`, runs ESLint, and performs a production Vite build.
 - Infrastructure validation runs a repository-level Python script that checks required repo assets and expected `.env.example` keys, then validates `docker compose config`.
-- Deploy readiness extends the baseline checks with smoke imports for the FastAPI app and worker so the main branch stays in a deployable state.
+- Deploy readiness extends the baseline checks with smoke imports for the FastAPI app and log-processor so the main branch stays in a deployable state.
 
 ## Auditability
 

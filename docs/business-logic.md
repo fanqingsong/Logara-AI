@@ -84,7 +84,7 @@ graph TB
 
 **示例：支付服务超时排查**
 
-假设 `payments-api` 曾写入以下日志（已通过 Worker 向量化）：
+假设 `payments-api` 曾写入以下日志（已通过 log-processor 向量化）：
 
 ```json
 { "service_id": "payments-api", "level": "ERROR", "message": "Connection pool exhausted waiting for checkout-db" }
@@ -141,7 +141,7 @@ curl "http://localhost:8000/search?query=checkout%20database%20timeout&service_i
 ```mermaid
 sequenceDiagram
     participant Dev as 开发者
-    participant AI as AI Engine
+    participant AI as Insight Engine
     participant Cache as incident_memory
     participant Q as Qdrant logs
     participant LLM as GLM
@@ -225,7 +225,7 @@ curl -X POST http://localhost:8001/explain -H "Content-Type: application/json" -
 
 若向量相似度 ≥ **0.95**，直接返回缓存，`model` 字段显示 `"glm-5.1 (cached)"`，`context_logs` 为空——**节省 LLM 调用成本与延迟**。
 
-**关键代码路径：** `ai-engine/services/explain.py` → `ExplainService.explain()`
+**关键代码路径：** `insight-engine/services/explain.py` → `ExplainService.explain()`
 
 **适用场景**
 
@@ -245,18 +245,18 @@ curl -X POST http://localhost:8001/explain -H "Content-Type: application/json" -
 - 语义搜索结果被重复日志淹没
 - Dashboard 噪声极大，难以看到"真正有多少种不同错误"
 
-Logara 在 Worker 异步管道中用**语义聚类**把"意思相同、细节不同"的日志合并。
+Logara 在 log-processor 异步管道中用**语义聚类**把"意思相同、细节不同"的日志合并。
 
 **工作原理**
 
-1. Worker 消费 Redis 队列，为每条日志生成 embedding
+1. log-processor 消费 Redis 队列，为每条日志生成 embedding
 2. 在 `log_clusters` 集合中搜索最近邻
 3. 相似度 **≥ 0.92**（默认）→ 判定为重复，**只更新 cluster 元数据，不写入 `logs`**
 4. 相似度 < 0.92 → 新建 cluster，同时写入 `logs` + `log_clusters`
 
 **示例：同一错误的三次出现**
 
-| 次序 | 原始日志 | Worker 行为 |
+| 次序 | 原始日志 | log-processor 行为 |
 |------|----------|-------------|
 | 第 1 条 | `ERROR: Database timeout for user 123` | 新建 cluster，写入 `logs` + `log_clusters` |
 | 第 2 条 | `ERROR: Database timeout for user 456` | 相似度 0.95 → `is_duplicate=true`，仅更新 cluster |
@@ -333,8 +333,8 @@ flowchart LR
     Clean --> Queue["Redis 队列"]
     Clean --> Metrics["脱敏统计 metrics"]
 
-    Queue --> Worker["Worker 向量化"]
-    Worker --> Qdrant["Qdrant 存储"]
+    Queue --> LP["log-processor 向量化"]
+    LP --> Qdrant["Qdrant 存储"]
     Qdrant --> LLM["GLM 分析"]
 
     style Raw fill:#ffcccc
@@ -472,7 +472,7 @@ graph TB
 
     subgraph Async["异步处理"]
         Redis[(Redis<br/>log_queue)]
-        Worker[worker.py<br/>Log Processor]
+        LP[worker.py<br/>Log Processor]
         Cluster[DuplicateClusteringService]
     end
 
@@ -483,7 +483,7 @@ graph TB
         IncidentCol[incident_memory 集合]
     end
 
-    subgraph AI["AI Engine · FastAPI :8001"]
+    subgraph AI["Insight Engine · FastAPI :8001"]
         AISearch[SearchService]
         Explain[ExplainService]
         IncidentMem[IncidentMemoryService]
@@ -500,10 +500,10 @@ graph TB
 
     Sources --> Ingest
     Ingest --> Redact --> Parser --> QueuePush --> Redis
-    Redis --> Worker
-    Worker --> Embed
-    Worker --> Cluster
-    Worker --> LogsCol
+    Redis --> LP
+    LP --> Embed
+    LP --> Cluster
+    LP --> LogsCol
     Cluster --> ClusterCol
     LogsCol --- Qdrant
     ClusterCol --- Qdrant
@@ -526,8 +526,8 @@ graph TB
 | 组件 | 端口/进程 | 核心职责 |
 |------|-----------|----------|
 | **Backend** | `:8000` | HTTP 接入、脱敏、解析、入队、健康检查、告警/解析/安全扩展 API |
-| **Worker** | 独立进程 `python worker.py` | 消费 Redis 队列、生成 embedding、语义聚类、写入 Qdrant |
-| **AI Engine** | `:8001` | 语义搜索、RAG 根因解释、Incident Memory 缓存 |
+| **Log Processor** | `python worker.py` | 消费 Redis 队列、生成 embedding、语义聚类、写入 Qdrant |
+| **Insight Engine** | `:8001` | 语义搜索、RAG 根因解释、Incident Memory 缓存 |
 | **Frontend** | Vite dev / nginx | Dashboard 统计、LogExplorer 日志浏览 |
 | **Redis** | `:6379` | 异步队列 `log_queue`，LRU 512MB |
 | **Qdrant** | `:6333` | 三集合向量存储与 metadata 过滤 |
@@ -587,9 +587,9 @@ flowchart TD
 
 ---
 
-### 3.2 异步索引（Worker Processing）
+### 3.2 异步索引（Log Processor）
 
-Worker 从 Redis 阻塞消费，完成 embedding 生成、语义去重聚类、Qdrant 持久化。
+log-processor 从 Redis 阻塞消费，完成 embedding 生成、语义去重聚类、Qdrant 持久化。
 
 ```mermaid
 sequenceDiagram
@@ -642,12 +642,12 @@ graph LR
         I2[error → explanation<br/>相似度 ≥ 0.95 命中]
     end
 
-    Worker -->|非 duplicate| logs
-    Worker --> clusters
-    AIEngine[AI Engine Explain] --> incidents
+    LP -->|非 duplicate| logs
+    LP --> clusters
+    InsightEngine[Insight Engine Explain] --> incidents
 ```
 
-**service_id 解析优先级**（Worker `_extract_service_id()`）：
+**service_id 解析优先级**（log-processor `_extract_service_id()`）：
 
 1. `service`
 2. `service.name`
@@ -678,7 +678,7 @@ flowchart LR
         B3[llm_chat 生成 answer]
     end
 
-    subgraph PathC["路径 C · AI Engine GET /search"]
+    subgraph PathC["路径 C · Insight Engine GET /search"]
         C1[可选 service_id 过滤]
         C2[SearchService.search]
         C3[结构化 SearchResult 列表]
@@ -693,7 +693,7 @@ flowchart LR
 |------|------|------------|----------|----------|
 | A | `GET /search?query=...&service_id=...` | ✅ 强制 | ❌ | 微服务内精准语义检索 |
 | B | `POST /search` body `{ query }` | ❌ | ✅ | 跨服务探索 + 自然语言回答 |
-| C | AI Engine `GET /search` | ⚪ 可选 | ❌ | 独立 AI 微服务调用 |
+| C | Insight Engine `GET /search` | ⚪ 可选 | ❌ | 独立 AI 微服务调用 |
 
 **服务级搜索示例**（详见 [service-scoped-vector-search.md](./service-scoped-vector-search.md)）：
 
@@ -705,7 +705,7 @@ GET /search?query=database timeout&service_id=payments-api&environment=productio
 
 ### 3.4 根因解释（Explain / RAG）
 
-AI Engine 的 Explain 是完整的 **RAG（检索增强生成）** 流水线：
+Insight Engine 的 Explain 是完整的 **RAG（检索增强生成）** 流水线：
 
 ```mermaid
 sequenceDiagram
@@ -792,7 +792,7 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> Ingestion: 日志接入
-    Ingestion --> Detector: analyze_log()<br/>（已导入，Worker 未调用）
+    Ingestion --> Detector: analyze_log()<br/>（已导入，log-processor 未调用）
     Detector --> Scoring: ERROR/CRITICAL/FATAL
     Scoring --> ZScore: calculate_z_score()
     ZScore --> AnomalyEvent: 超阈值
@@ -921,7 +921,7 @@ graph TB
 | GET | `/health` | `health_check()` | Redis / Qdrant / LLM 健康 |
 | GET | `/dashboard` | `dashboard()` | 内存统计（遗留实现） |
 
-### 5.2 AI Engine API（`:8001`）
+### 5.2 Insight Engine API（`:8001`）
 
 | 方法 | 路径 | 服务 | 业务用途 |
 |------|------|------|----------|
@@ -937,7 +937,7 @@ graph TB
 | `/dashboard` | Dashboard | `GET /dashboard` |
 | `/docs` | Docs | 静态文档页 |
 
-> **注意：** 前端当前未直接集成 AI Engine 的 `/explain` 端点。
+> **注意：** 前端当前未直接集成 Insight Engine 的 `/explain` 端点。
 
 ---
 
@@ -950,20 +950,17 @@ graph TB
     subgraph Compose["docker compose up"]
         Qdrant["qdrant :6333<br/>向量 DB<br/>volume: qdrant_data"]
         Redis["redis :6379<br/>队列<br/>LRU 512MB"]
-        AIEngine["ai-engine :8001<br/>搜索 + Explain"]
+        InsightEngine["insight-engine :8001<br/>搜索 + Explain"]
+        Backend["backend :8000<br/>FastAPI 采集"]
+        LogProcessor["log-processor<br/>embedding + 去重聚类"]
+        Frontend["frontend :5174<br/>React + nginx"]
     end
 
-    subgraph Manual["需手动启动"]
-        Backend["backend :8000<br/>FastAPI"]
-        Worker["worker.py<br/>异步处理器"]
-        Frontend["frontend<br/>React + nginx"]
-    end
-
-    AIEngine -->|depends_on healthy| Qdrant
+    InsightEngine -->|depends_on healthy| Qdrant
     Backend --> Redis
     Backend --> Qdrant
-    Worker --> Redis
-    Worker --> Qdrant
+    LogProcessor --> Redis
+    LogProcessor --> Qdrant
     Frontend --> Backend
 
     Network["logara_internal bridge 网络"]
@@ -974,10 +971,10 @@ graph TB
 |------|-------------|------|
 | qdrant | ✅ | 持久化向量存储 |
 | redis | ✅ | 需配置 `REDIS_PASSWORD` |
-| ai-engine | ✅ | 依赖 Qdrant healthy |
-| backend | ❌ | 本地 `uvicorn main:app` 或单独构建 |
-| worker | ❌ | 独立进程，与 backend 共享代码 |
-| frontend | ❌ | Vite dev 或 nginx 容器 |
+| insight-engine | ✅ | 语义搜索 + RAG 根因解释，依赖 Qdrant healthy |
+| backend | ✅ | FastAPI 采集 + 检索 API |
+| log-processor | ✅ | 消费队列，生成 embedding，语义去重聚类 |
+| frontend | ✅ | nginx 提供静态文件并代理后端 API |
 
 ### 6.2 外部依赖
 
@@ -992,7 +989,7 @@ graph TB
 
 | 环境变量 | 默认值 | 业务影响 |
 |----------|--------|----------|
-| `redis_queue_name` | `log_queue` | Worker 消费队列名 |
+| `redis_queue_name` | `log_queue` | log-processor 消费队列名 |
 | `qdrant_collection` | `logs` | 主搜索集合 |
 | `qdrant_cluster_collection` | `log_clusters` | 去重聚类集合 |
 | `duplicate_similarity_threshold` | `0.92` | 判定重复日志的相似度阈值 |
@@ -1012,9 +1009,9 @@ graph TB
 sequenceDiagram
     participant App as payments-api
     participant BE as Backend
-    participant W as Worker
+    participant W as Log Processor
     participant Q as Qdrant
-    participant AI as AI Engine
+    participant AI as Insight Engine
     participant Dev as 开发者
 
     App->>BE: POST /ingest<br/>{ service_id: payments-api,<br/>level: ERROR,<br/>message: database timeout }
@@ -1046,10 +1043,10 @@ sequenceDiagram
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 异常检测 | ⚠️ 部分 | `analyze_log()` 已实现在 Worker 中导入但未调用 |
+| 异常检测 | ⚠️ 部分 | `analyze_log()` 已实现在 log-processor 中导入但未调用 |
 | Dashboard | ⚠️ 遗留 | 使用内存统计，非 Qdrant 实时数据 |
-| Frontend × AI Engine | ⚠️ 未集成 | LogExplorer 未调用 `/explain` |
-| Docker Compose | ⚠️ 不完整 | 不含 Backend / Worker / Frontend |
+| Frontend × Insight Engine | ⚠️ 未集成 | LogExplorer 未调用 `/explain` |
+| Docker Compose | ✅ 已补全 | backend / log-processor / frontend 已纳入 compose（原仅含基础设施） |
 | 双搜索路径 | ℹ️ 设计如此 | GET（服务级）与 POST（全局+LLM）职责重叠，调用方需明确选择 |
 
 ---

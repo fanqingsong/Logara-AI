@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1024
 
     # Service defaults
-    ai_engine_search_limit: int = 10
-    ai_engine_context_limit: int = 5
+    insight_engine_search_limit: int = 10
+    insight_engine_context_limit: int = 5
 
 
 @lru_cache

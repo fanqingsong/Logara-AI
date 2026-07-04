@@ -1,3 +1,18 @@
+x-backend-environment: &backend-environment
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  QDRANT_URL: http://qdrant:6333
+  QDRANT_COLLECTION: ${QDRANT_COLLECTION:-logs}
+  LLM_BASE_URL: ${LLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4/}
+  LLM_API_KEY: ${LLM_API_KEY}
+  LLM_MODEL: ${LLM_MODEL:-glm-5.1}
+  EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1/}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+  EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
+  CORS_ALLOWED_ORIGINS: http://localhost:5174,http://localhost:8000
+
 services:
   qdrant:
     image: qdrant/qdrant:latest
@@ -31,9 +46,9 @@ services:
       retries: 5
       start_period: 10s
 
-  ai-engine:
+  insight-engine:
     build:
-      context: ./ai-engine
+      context: ./insight-engine
       dockerfile: Dockerfile
     ports:
       - "8001:8001"
@@ -59,8 +74,163 @@ services:
       retries: 5
       start_period: 90s
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *backend-environment
+    networks:
+      - logara_internal
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  log-processor:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "worker.py"]
+    environment:
+      <<: *backend-environment
+    networks:
+      - logara_internal
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5174:80"
+    networks:
+      - logara_internal
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+      - simulator_logs:/var/log/simulator:ro
+      - /var/log:/var/log/host:ro
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - logara_internal
+    depends_on:
+      backend:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      log-simulator:
+        condition: service_started
+    restart: unless-stopped
+
+  loki:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/grafana/loki:3.4.2
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - logara_internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  grafana:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/grafana/grafana:11.5.2
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - logara_internal
+    depends_on:
+      loki:
+        condition: service_healthy
+    restart: unless-stopped
+
+  log-simulator:
+    build:
+      context: ./log-simulator
+      dockerfile: Dockerfile
+    environment:
+      LOG_FILE: /var/log/simulator/app.log
+      INTERVAL_SEC: ${LOG_SIMULATOR_INTERVAL_SEC:-8}
+      SERVICE_ID: ${LOG_SIMULATOR_SERVICE_ID:-checkout-api}
+    volumes:
+      - simulator_logs:/var/log/simulator
+    networks:
+      - logara_internal
+    restart: unless-stopped
+
+  # Embedded OpenTelemetry SDK demo — exports logs via OTLP HTTP to otel-collector.
+  otel-demo-app:
+    build:
+      context: ./otel-demo-app
+      dockerfile: Dockerfile
+    environment:
+      OTEL_SERVICE_NAME: ${OTEL_DEMO_SERVICE_ID:-inventory-service}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      INTERVAL_SEC: ${OTEL_DEMO_INTERVAL_SEC:-10}
+      DEPLOYMENT_ENV: demo
+    networks:
+      - logara_internal
+    depends_on:
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   qdrant_data:
+  simulator_logs:
+  loki_data:
+  grafana_data:
 
 networks:
   logara_internal:

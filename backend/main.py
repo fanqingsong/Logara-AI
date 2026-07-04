@@ -64,6 +64,7 @@ async def parser_metrics():
     }
 
 @app.get("/dashboard")
+@app.get("/api/dashboard")
 async def dashboard():
     log_service = app.state.log_service
     logs, total = log_service.get_logs(page=1, limit=500)

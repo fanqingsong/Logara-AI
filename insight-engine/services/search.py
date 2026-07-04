@@ -88,13 +88,14 @@ class SearchService:
         # 3. Query Qdrant
         try:
             client = get_qdrant_client()
-            hits = client.search(
+            response = client.query_points(
                 collection_name=settings.qdrant_collection,
-                query_vector=vector,
+                query=vector,
                 query_filter=query_filter,
                 limit=limit,
                 with_payload=True,
             )
+            hits = response.points
         except Exception as e:
             logger.error(f"Qdrant search failed: {e}")
             raise

@@ -113,6 +113,48 @@ const Navbar = () => {
         </Link>
 
         <Link
+          to="/explore"
+          className="
+            relative
+            hover:text-white
+            transition
+            duration-300
+            after:absolute
+            after:left-0
+            after:-bottom-1
+            after:h-[2px]
+            after:w-0
+            after:bg-cyan-400
+            after:transition-all
+            after:duration-300
+            hover:after:w-full
+          "
+        >
+          Explore
+        </Link>
+
+        <Link
+          to="/embedding-map"
+          className="
+            relative
+            hover:text-white
+            transition
+            duration-300
+            after:absolute
+            after:left-0
+            after:-bottom-1
+            after:h-[2px]
+            after:w-0
+            after:bg-emerald-400
+            after:transition-all
+            after:duration-300
+            hover:after:w-full
+          "
+        >
+          Map
+        </Link>
+
+        <Link
           to="/docs"
           className="
             relative

@@ -281,6 +281,73 @@ class IngestionService:
             "fallback_used": False,
         }
 
+    def ingest_otel_logs_full(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Queue every OTel log record for full-fidelity archival (no dedup)."""
+        if not payload:
+            raise HTTPException(status_code=400, detail="Empty payload")
+
+        try:
+            records = parse_otel_log_payload(payload)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to parse OTel logs: {str(exc)}",
+            ) from exc
+
+        if not records:
+            return {
+                "status": "success",
+                "message": "No logs found in payload",
+                "processed_records": 0,
+                "redaction_summary": {},
+                "fallback_used": True,
+            }
+
+        queued_count = 0
+        total_redaction_matches: dict[str, int] = {}
+
+        for record in records:
+            record_metadata = record.get("metadata", {})
+            if not isinstance(record_metadata, dict):
+                record_metadata = {}
+
+            final_service_id = extract_service_id(
+                parsed=record,
+                metadata=record_metadata,
+                default="unknown_service",
+            )
+
+            record_metadata["service_id"] = final_service_id
+            record_metadata.setdefault("service", final_service_id)
+
+            record["service_id"] = final_service_id
+            record["service"] = record.get("service") or record_metadata.get("service")
+            record["metadata"] = record_metadata
+
+            redact_res = self.redactor.redact_with_summary(record["message"])
+
+            record["message"] = redact_res.text
+            record["raw"] = redact_res.text
+
+            for label, count in redact_res.matches.items():
+                total_redaction_matches[label] = (
+                    total_redaction_matches.get(label, 0) + count
+                )
+
+            record = self.redactor.redact_dict(record)
+
+            self._queue_full_log_payload(record)
+
+            queued_count += 1
+
+        return {
+            "status": "success",
+            "message": "OTel logs queued for full archive",
+            "processed_records": queued_count,
+            "redaction_summary": total_redaction_matches,
+            "fallback_used": False,
+        }
+
     def _normalize_structured_log(
         self,
         request_model: StructuredLogIngestRequest,
